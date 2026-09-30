@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { existsSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { Store } from './store.js';
 import { readPage } from './mail.js';
 import { finishAndNotify, makeDigest } from './notify.js';
@@ -61,11 +62,20 @@ async function main():Promise<void>{
       result=store.submit(payload);
     }else if(command==='finish')result=await finishAndNotify(store);
     else if(command==='digest')result=makeDigest(store);
-    else if(command==='doctor')result={
-      node:process.version,skill_dir_configured:!!process.env.QQEXMAIL_SKILL_DIR,
-      mail_account_configured:!!process.env.EXMAIL_ACCOUNT,mail_auth_configured:!!process.env.EXMAIL_AUTH_CODE,
-      wechat_configured:!!process.env.SERVERCHAN_SENDKEY,data_dir:dataDir,
-    };
+    else if(command==='doctor'){
+      const skill=process.env.QQEXMAIL_SKILL_DIR??'';
+      const account=process.env.EXMAIL_ACCOUNT??'';
+      const auth=process.env.EXMAIL_AUTH_CODE??'';
+      const sendKey=process.env.SERVERCHAN_SENDKEY??'';
+      result={
+        node:process.version,
+        skill_dir_configured:!!skill && existsSync(join(skill,'SKILL.md')) && existsSync(join(skill,'package.json')),
+        mail_account_configured:/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(account) && !/your-|example|placeholder/i.test(account),
+        mail_auth_configured:auth.length>=6 && !/your-|example|placeholder/i.test(auth),
+        wechat_configured:/^SCT[A-Za-z0-9_-]{10,}$/.test(sendKey),
+        data_dir:dataDir,
+      };
+    }
     else if(command==='abort-run'){
       if(process.argv[3]!=='--confirm-stopped')throw new AppError('CONFIRM_STOPPED','请先确认旧任务已经停止，再使用 --confirm-stopped。');
       result=store.transaction(()=>{

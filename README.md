@@ -30,7 +30,7 @@ node --env-file=.env dist/cli.js doctor
 node --env-file=.env dist/cli.js serve
 ```
 
-打开 <http://127.0.0.1:3210>。`doctor` 只检查是否配置，不连接邮箱、不显示密钥。若只是体验界面，可运行 `npm run demo` 并打开 <http://127.0.0.1:3211>；演示数据与正式数据分开。
+打开 <http://127.0.0.1:3210>。`doctor` 检查技能路径与配置格式，不连接邮箱、不显示密钥。若只是体验界面，可运行 `npm run demo` 并打开 <http://127.0.0.1:3211>；演示数据与正式数据分开。
 
 然后按照 [千问办公任务说明](docs/QWENWORK_TASK.md) 建立**一项每 4 小时**运行的本地定时任务。任务逐批调用 `begin`、`batch`、`submit`、`finish`；只有 `finish` 尝试发送微信摘要。任务中断后可恢复当前批次，不能直接重跑 `finish` 以补发结果不明的消息。
 
