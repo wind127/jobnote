@@ -37,7 +37,7 @@
 .todos-table{min-width:810px}
 .todos-table .table-actions,.applications-table .table-actions{display:flex;align-items:center;gap:9px;white-space:nowrap}
 .todos-table .quiet-action,.applications-table .quiet-action{padding:5px 0;font-size:11px}
-.review-evidence{margin:12px 0 2px;padding:11px 14px;border-left:3px solid #d6ac73;background:#fff9ef;color:var(--ink-soft);font-size:12px;line-height:1.6;overflow-wrap:anywhere}
+.review-evidence{margin:12px 0 2px;padding:11px 14px;border-left:3px solid #d6ac73;background:#fff9ef;color:var(--ink-soft);font-size:12px;line-height:1.6;overflow-wrap:anywhere;white-space:pre-line}
 @media(max-width:760px){.overview{grid-template-columns:minmax(0,1fr) 126px;gap:12px;padding:19px 21px}.overview h1{font-size:23px}.overview-count{border-left:1px solid rgba(255,255,255,.2);border-top:0;padding:4px 0 4px 15px}.overview-count strong{font-size:36px}.overview-count small{display:none}}
 @media(max-width:480px){.overview{grid-template-columns:minmax(0,1fr) 91px}.overview-count{min-width:0;padding-left:12px}.overview-count strong{font-size:32px}.overview-count .count-label{font-size:10px}.sync-line{font-size:11px}.summary-strip strong{font-size:22px}}
 .review-dialog{width:min(600px,calc(100% - 30px))}

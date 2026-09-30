@@ -10,6 +10,36 @@ const clean = (value: unknown, max = 250) => typeof value === 'string' ? value.t
 const iso = (value: unknown) => typeof value === 'string' && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : null;
 const keyOf = (value: string) => value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLowerCase();
 const asRows = (rows: unknown[]) => rows as Row[];
+// A review is one unresolved application/stage, while every email remains an event.
+// Missing roles are deliberately kept separate: one company may have many applications.
+function reviewIdentity(row: Row): string | null {
+  const company=clean(row.company,150), position=clean(row.position,150);
+  if (!company) return null;
+  if (position) return JSON.stringify(['role',keyOf(company),keyOf(position),String(row.stage),keyOf(clean(row.application_ref,100)),keyOf(clean(row.round,80))]);
+  // Without a role, only near-identical actionable notices may be collapsed.
+  if (!['assessment','written_test','ai_interview','interview','interview_1','interview_2','interview_3'].includes(String(row.stage))) return null;
+  const evidence=keyOf(clean(row.evidence,600));
+  if (evidence.length<6) return null;
+  let due='';
+  try { const todo=JSON.parse(String(row.todo_json??'null')); due=clean(todo?.due_at,40)||clean(todo?.due_date,10); } catch { /* Keep the source separate if the stored task is malformed. */ return null; }
+  return JSON.stringify(['notice',keyOf(company),String(row.stage),String(row.status),keyOf(clean(row.application_ref,100)),keyOf(clean(row.subject,250)),keyOf(clean(row.sender,250)),evidence,due]);
+}
+
+function groupReviews(rows: Row[]): Row[][] {
+  const ordered=rows.slice().sort((a,b)=>String(a.occurred_at).localeCompare(String(b.occurred_at))||Number(a.uid)-Number(b.uid)||Number(a.ordinal)-Number(b.ordinal));
+  const groups=new Map<string,Row[][]>();
+  for (const row of ordered) {
+    const identity=reviewIdentity(row),key=identity??String(row.id);
+    const buckets=groups.get(key)??[];
+    const current=buckets.at(-1);
+    const maxGap=identity?.startsWith('["notice"')?48*3_600_000:30*86_400_000;
+    const gap=current?Date.parse(String(row.occurred_at))-Date.parse(String(current.at(-1)!.occurred_at)):Infinity;
+    if (current&&gap<=maxGap) current.push(row);
+    else buckets.push([row]);
+    groups.set(key,buckets);
+  }
+  return [...groups.values()].flat();
+}
 
 export class Store {
   readonly db: DatabaseSync;
@@ -34,6 +64,7 @@ export class Store {
     for (const [table, column, definition] of [
       ['batches', 'is_retry', 'INTEGER NOT NULL DEFAULT 0'],
       ['review_items', 'todo_json', 'TEXT'],
+      ['review_items', 'application_ref', 'TEXT'],
     ]) {
       const columns = this.db.prepare(`PRAGMA table_info(${table})`).all() as Row[];
       if (!columns.some(item => item.name === column)) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
@@ -233,7 +264,7 @@ export class Store {
           const eventId=randomUUID();
           this.db.prepare('INSERT INTO events(id,source_key,ordinal,application_id,stage,status,round,occurred_at,evidence,needs_review) VALUES(?,?,?,?,?,?,?,?,?,?)').run(eventId,msg.source_key,ordinal,app ? String(app.id) : null,update.stage,update.status,clean(update.round,80)||null,iso(update.occurred_at)??String(local.received_at),clean(update.evidence,600),needsReview?1:0);
           if (needsReview) {
-            this.db.prepare('INSERT INTO review_items(id,source_key,ordinal,reason,company,position,stage,status,evidence,todo_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(randomUUID(),msg.source_key,ordinal,(!company||!position)?'公司或岗位待核对':'归属或内容待核对',company||null,position||null,update.stage,update.status,clean(update.evidence,600),update.todo?JSON.stringify(update.todo):null,nowIso());
+            this.db.prepare('INSERT INTO review_items(id,source_key,ordinal,reason,company,position,stage,status,evidence,todo_json,created_at,application_ref) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(randomUUID(),msg.source_key,ordinal,(!company||!position)?'公司或岗位待核对':'归属或内容待核对',company||null,position||null,update.stage,update.status,clean(update.evidence,600),update.todo?JSON.stringify(update.todo):null,nowIso(),appRef);
             reviews++;
           } else if (app) {
             applied++;
@@ -280,10 +311,23 @@ export class Store {
     this.bumpVersion();
   }
 
+  private openReviewRows(): Row[] {
+    return asRows(this.db.prepare(`SELECT r.*,e.round,e.occurred_at,m.uid,m.subject,m.sender
+      FROM review_items r JOIN events e ON e.source_key=r.source_key AND e.ordinal=r.ordinal
+      JOIN mail_sources m ON m.source_key=r.source_key WHERE r.state='open'`).all());
+  }
+
+  private reviewMembers(id: string): Row[] {
+    const rows=this.openReviewRows();
+    const selected=rows.find(row=>row.id===id);
+    if (!selected) throw new AppError('REVIEW_NOT_FOUND','待核对事项不存在。');
+    return groupReviews(rows).find(group=>group.some(row=>row.id===id)) ?? [selected];
+  }
+
   resolveReview(id: string, company: string, position: string, applicationId?: string, stage?: string, status?: string): void {
     this.transaction(() => {
-      const review=this.db.prepare("SELECT * FROM review_items WHERE id=? AND state='open'").get(id) as Row|undefined;
-      if(!review)throw new AppError('REVIEW_NOT_FOUND','待核对事项不存在。');
+      const members=this.reviewMembers(id);
+      const review=members.at(-1)!;
       const name=clean(company,150),role=clean(position,150);
       if(!name||!role)throw new AppError('BAD_APPLICATION','请填写公司和岗位。');
       const phase=stage??String(review.stage),result=status??String(review.status);
@@ -297,38 +341,49 @@ export class Store {
         if(!app)throw new AppError('APPLICATION_NOT_FOUND','所选岗位不存在。');
       }else{
         const matches=this.db.prepare('SELECT * FROM applications WHERE lower(company)=? AND lower(position)=?').all(keyOf(name),keyOf(role)) as Row[];
-        if(matches.length>1)throw new AppError('AMBIGUOUS_APPLICATION','有多个同名岗位，请明确选择。');
-        app=matches[0];
+        const ref=clean(review.application_ref,100);
+        const candidates=ref?matches.filter(row=>row.application_ref===ref):matches;
+        if(candidates.length>1||(!ref&&matches.length>1))throw new AppError('AMBIGUOUS_APPLICATION','有多个同名岗位，请明确选择。');
+        app=candidates[0];
         if(!app){
           const appId=randomUUID();
-          this.db.prepare('INSERT INTO applications(id,company,position,stage,status,last_event_at) VALUES(?,?,?,?,?,?)').run(appId,name,role,phase,result,String(event.occurred_at));
+          this.db.prepare('INSERT INTO applications(id,company,position,application_ref,stage,status,last_event_at) VALUES(?,?,?,?,?,?,?)').run(appId,name,role,ref||null,phase,result,String(event.occurred_at));
           app=this.db.prepare('SELECT * FROM applications WHERE id=?').get(appId) as Row;
           created=true;
         }
       }
-      this.db.prepare('UPDATE events SET application_id=?,stage=?,status=?,needs_review=0 WHERE id=?').run(String(app.id),phase,result,String(event.id));
+      for(const member of members){
+        const memberEvent=this.db.prepare('SELECT id FROM events WHERE source_key=? AND ordinal=?').get(String(member.source_key),Number(member.ordinal)) as Row|undefined;
+        if(!memberEvent)throw new AppError('EVENT_NOT_FOUND','对应邮件进展不存在。');
+        this.db.prepare('UPDATE events SET application_id=?,stage=?,status=?,needs_review=0 WHERE id=?').run(String(app.id),phase,member.id===review.id?result:String(member.status),String(memberEvent.id));
+        this.db.prepare("UPDATE review_items SET state='resolved' WHERE id=?").run(String(member.id));
+      }
       if(!created&&!Number(app.manual_stage)&&Date.parse(String(event.occurred_at))>=Date.parse(String(app.last_event_at))){
         this.db.prepare('UPDATE applications SET stage=?,status=?,last_event_at=?,version=version+1 WHERE id=?').run(phase,result,String(event.occurred_at),String(app.id));
       }
       if(review.todo_json){
         this.upsertTodo(String(app.id),String(event.id),{stage:phase as UpdateInput['stage'],status:result as UpdateInput['status'],round:event.round as string|null,todo:JSON.parse(String(review.todo_json)),evidence:String(event.evidence),company:name,position:role});
       }
-      this.db.prepare("UPDATE review_items SET state='resolved' WHERE id=?").run(id);
       this.bumpVersion();
     });
   }
 
   ignoreReview(id: string): void {
-    const result=this.db.prepare("UPDATE review_items SET state='ignored' WHERE id=? AND state='open'").run(id);
-    if(!result.changes)throw new AppError('REVIEW_NOT_FOUND','待核对事项不存在。');
-    this.bumpVersion();
+    this.transaction(()=>{
+      for(const member of this.reviewMembers(id))this.db.prepare("UPDATE review_items SET state='ignored' WHERE id=?").run(String(member.id));
+      this.bumpVersion();
+    });
   }
 
   dashboard(): object {
     const applications=asRows(this.db.prepare('SELECT * FROM applications ORDER BY last_event_at DESC').all());
     const todos=asRows(this.db.prepare('SELECT * FROM todos ORDER BY COALESCE(due_at,due_date) ASC').all());
     const events=asRows(this.db.prepare('SELECT e.*,m.subject,m.sender,m.received_at FROM events e JOIN mail_sources m ON m.source_key=e.source_key ORDER BY e.occurred_at DESC').all());
-    const reviews=asRows(this.db.prepare("SELECT * FROM review_items WHERE state='open' ORDER BY created_at DESC").all());
+    const reviews:Row[]=groupReviews(this.openReviewRows()).map(group=>({
+      ...group.at(-1)!,mail_count:group.length,
+      notices:group.map(row=>({occurred_at:row.occurred_at,status:row.status,evidence:row.evidence})),
+    }));
+    reviews.sort((a,b)=>String(b.occurred_at).localeCompare(String(a.occurred_at)));
     const failures=asRows(this.db.prepare("SELECT source_key,uid,subject,error,status,skip_reason,updated_at FROM failures WHERE status IN ('pending','skipped','retry_requested') ORDER BY updated_at DESC").all());
     const scan=this.scanState();
     const active=this.db.prepare("SELECT upper_uid FROM runs WHERE status='active' LIMIT 1").get() as Row | undefined;

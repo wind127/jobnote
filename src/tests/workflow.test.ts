@@ -193,3 +193,106 @@ test('pending labels follow the stage and unnumbered interviews require review',
     assert.equal((ctx.store.dashboard() as {applications:Array<Record<string,unknown>>}).applications[0].stage,'interview_1');
   }finally{ctx.close();}
 });
+
+test('repeated notices share one review and the latest schedule; resolving keeps every source event',()=>{
+  const ctx=fixture();
+  try{
+    const run=ctx.store.beginRun();
+    const notices=[
+      {...message(1,'示例科技邀请后端工程师面试。'),receivedAt:'2026-09-01T08:00:00.000Z'},
+      {...message(2,'示例科技取消后端工程师面试。'),receivedAt:'2026-09-02T08:00:00.000Z'},
+      {...message(3,'示例科技重新安排后端工程师面试。'),receivedAt:'2026-09-03T08:00:00.000Z'},
+    ];
+    const batch=ctx.store.savePage(String(run.id),page(notices,3))!;
+    const statuses=['invited','cancelled','scheduled'] as const;
+    const evidence=['邀请后端工程师面试','取消后端工程师面试','重新安排后端工程师面试'];
+    ctx.store.submit({schema_version:'1',run_id:String(run.id),batch_id:String(batch.id),messages:notices.map((notice,index)=>({
+      source_key:ctx.store.sourceKey(17,notice.uid),classification:'recruitment',updates:[{
+        company:'示例科技',position:'后端工程师',stage:'interview',status:statuses[index],needs_review:true,
+        evidence:evidence[index],todo:index===1?null:{title:'参加面试',due_date:index===0?'2026-09-05':'2026-09-08',kind:'interview'},
+      }],
+    }))});
+    const before=ctx.store.dashboard() as {reviews:Array<Record<string,unknown>>;events:Array<Record<string,unknown>>};
+    assert.equal(before.reviews.length,1);
+    assert.equal(before.reviews[0].mail_count,3);
+    assert.equal(before.reviews[0].status,'scheduled');
+    assert.equal(JSON.parse(String(before.reviews[0].todo_json)).due_date,'2026-09-08');
+    assert.equal(before.events.length,3);
+    ctx.store.resolveReview(String(before.reviews[0].id),'示例科技','后端工程师',undefined,'interview_1','scheduled');
+    const after=ctx.store.dashboard() as {reviews:unknown[];events:Array<Record<string,unknown>>;applications:Array<Record<string,unknown>>;todos:Array<Record<string,unknown>>};
+    assert.equal(after.reviews.length,0);
+    assert.equal(after.applications.length,1);
+    assert.equal(after.applications[0].status,'scheduled');
+    assert.equal(after.events.filter(event=>event.application_id===after.applications[0].id).length,3);
+    assert.equal(after.events.find(event=>event.status==='cancelled')?.stage,'interview_1');
+    assert.equal(after.todos.length,1);
+    assert.equal(after.todos[0].due_date,'2026-09-08');
+  }finally{ctx.close();}
+});
+
+test('review grouping keeps missing roles and different application references separate',()=>{
+  const ctx=fixture();
+  try{
+    const run=ctx.store.beginRun();
+    const mails=[1,2,3,4].map(uid=>message(uid,`示例科技第${uid}封面试通知。`));
+    const batch=ctx.store.savePage(String(run.id),page(mails,4))!;
+    ctx.store.submit({schema_version:'1',run_id:String(run.id),batch_id:String(batch.id),messages:mails.map(mail=>({
+      source_key:ctx.store.sourceKey(17,mail.uid),classification:'recruitment',updates:[{
+        company:'示例科技',position:mail.uid<=2?null:'后端工程师',application_ref:mail.uid===3?'APP-A':'APP-B',
+        stage:'interview',status:'invited',needs_review:true,evidence:`第${mail.uid}封面试通知`,
+      }],
+    }))});
+    const dashboard=ctx.store.dashboard() as {reviews:Array<Record<string,unknown>>};
+    assert.equal(dashboard.reviews.length,4);
+    ctx.store.ignoreReview(String(dashboard.reviews[0].id));
+    assert.equal((ctx.store.dashboard() as {reviews:unknown[]}).reviews.length,3);
+    for(const review of (ctx.store.dashboard() as {reviews:Array<Record<string,unknown>>}).reviews.filter(row=>row.position==='后端工程师')){
+      ctx.store.resolveReview(String(review.id),'示例科技','后端工程师',undefined,'interview_1','invited');
+    }
+    const apps=(ctx.store.dashboard() as {applications:Array<Record<string,unknown>>}).applications;
+    assert.equal(apps.length,2);
+    assert.deepEqual(apps.map(app=>app.application_ref).sort(),['APP-A','APP-B']);
+  }finally{ctx.close();}
+});
+
+test('ignoring a grouped review closes every matching notice',()=>{
+  const ctx=fixture();
+  try{
+    const run=ctx.store.beginRun();
+    const mails=[message(1,'示例科技邀请后端工程师面试。'),message(2,'示例科技提醒后端工程师面试。')];
+    const batch=ctx.store.savePage(String(run.id),page(mails,2))!;
+    ctx.store.submit({schema_version:'1',run_id:String(run.id),batch_id:String(batch.id),messages:mails.map((mail,index)=>({
+      source_key:ctx.store.sourceKey(17,mail.uid),classification:'recruitment',updates:[{
+        company:'示例科技',position:'后端工程师',stage:'interview',status:'invited',needs_review:true,
+        evidence:index?'提醒后端工程师面试':'邀请后端工程师面试',
+      }],
+    }))});
+    const reviews=(ctx.store.dashboard() as {reviews:Array<Record<string,unknown>>}).reviews;
+    assert.equal(reviews.length,1);
+    ctx.store.ignoreReview(String(reviews[0].id));
+    assert.equal((ctx.store.dashboard() as {reviews:unknown[]}).reviews.length,0);
+    assert.equal((ctx.store.db.prepare("SELECT count(*) count FROM review_items WHERE state='ignored'").get() as {count:number}).count,2);
+  }finally{ctx.close();}
+});
+
+test('identical nearby reminders with no role collapse, while later notices stay separate',()=>{
+  const ctx=fixture();
+  try{
+    const run=ctx.store.beginRun();
+    const text='示例科技邀请参加在线笔试。';
+    const mails=[
+      {...message(1,text),receivedAt:'2026-09-01T08:00:00.000Z'},
+      {...message(2,text),receivedAt:'2026-09-02T08:00:00.000Z'},
+      {...message(3,text),receivedAt:'2026-09-10T08:00:00.000Z'},
+    ];
+    const batch=ctx.store.savePage(String(run.id),page(mails,3))!;
+    ctx.store.submit({schema_version:'1',run_id:String(run.id),batch_id:String(batch.id),messages:mails.map(mail=>({
+      source_key:ctx.store.sourceKey(17,mail.uid),classification:'recruitment',updates:[{
+        company:'示例科技',position:null,stage:'written_test',status:'invited',needs_review:true,evidence:'邀请参加在线笔试',
+      }],
+    }))});
+    const reviews=(ctx.store.dashboard() as {reviews:Array<Record<string,unknown>>}).reviews;
+    assert.equal(reviews.length,2);
+    assert.deepEqual(reviews.map(review=>review.mail_count).sort(),[1,2]);
+  }finally{ctx.close();}
+});
