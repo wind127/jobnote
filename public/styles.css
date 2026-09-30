@@ -18,3 +18,31 @@
 @media(max-width:960px){.today-column .todo-list{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:620px){.workspace-grid{gap:33px;margin-top:34px}.today-column .todo-list{grid-template-columns:1fr}.applications-table{min-width:865px}.applications-table th,.applications-table td{padding:13px 12px}.demo-banner a{display:inline-block;margin-top:5px}}
 .overview{min-height:156px;padding:23px 29px;grid-template-columns:minmax(0,1fr) 180px}.overview h1{font-size:clamp(23px,2.25vw,31px);max-width:none}.overview .eyebrow{margin-bottom:8px}.overview-sub{margin:8px 0 14px}.overview-count{padding:3px 0 3px 23px}.overview-count strong{font-size:43px}.overview-rail{display:none}.summary-strip{margin-top:11px;min-height:64px}.summary-strip>div{padding:11px 19px}.workspace-grid{margin-top:27px}
 @media(max-width:760px){.overview{grid-template-columns:minmax(0,1fr) 112px;gap:12px;padding:21px;min-height:0}.overview h1{font-size:24px}.overview-sub{font-size:12px;margin:7px 0 12px}.overview-count{border-top:0;border-left:1px solid rgba(255,255,255,.2);padding:4px 0 4px 15px}.overview-count strong{font-size:38px}.overview-count small{font-size:10px}.summary-strip>div{padding:10px}.workspace-grid{margin-top:25px}}@media(max-width:480px){.overview{grid-template-columns:1fr;gap:10px}.overview-count{border-left:0;border-top:1px solid rgba(255,255,255,.2);padding:9px 0 0}.overview-count div{margin:0}.overview-count strong{font-size:35px}.overview-count small{display:none}}
+
+/* Pending mail sits in the same ledger as confirmed applications. */
+.overview{min-height:108px;padding:21px 29px;border-radius:17px;align-items:center}
+.overview:before,.overview:after{display:none}
+.overview h1{font-size:clamp(24px,2.4vw,30px);line-height:1.2;margin:0 0 11px;letter-spacing:-.045em}
+.overview-count{min-width:160px;padding:3px 0 3px 26px}
+.overview-count strong{font-size:42px}
+.summary-strip{border-radius:12px}
+.section-heading h2{font-size:22px}
+.application-heading{margin-bottom:15px}
+.workspace-grid{gap:34px;margin-top:29px}
+.review-row,.applications-table .review-row td:first-child{background:#fffbf4}
+.applications-table .review-row:hover,.applications-table .review-row:hover td:first-child{background:#fff7e8}
+.review-row .company-cell{border-left:3px solid #dfa968;padding-left:13px}
+.review-flag{display:block;margin-top:4px;color:#a36b2b;font-size:10px;font-weight:800}
+.review-row .status-cell{color:#9b6c33}
+.todos-table{min-width:810px}
+.todos-table .table-actions,.applications-table .table-actions{display:flex;align-items:center;gap:9px;white-space:nowrap}
+.todos-table .quiet-action,.applications-table .quiet-action{padding:5px 0;font-size:11px}
+.review-evidence{margin:12px 0 2px;padding:11px 14px;border-left:3px solid #d6ac73;background:#fff9ef;color:var(--ink-soft);font-size:12px;line-height:1.6;overflow-wrap:anywhere}
+@media(max-width:760px){.overview{grid-template-columns:minmax(0,1fr) 126px;gap:12px;padding:19px 21px}.overview h1{font-size:23px}.overview-count{border-left:1px solid rgba(255,255,255,.2);border-top:0;padding:4px 0 4px 15px}.overview-count strong{font-size:36px}.overview-count small{display:none}}
+@media(max-width:480px){.overview{grid-template-columns:minmax(0,1fr) 91px}.overview-count{min-width:0;padding-left:12px}.overview-count strong{font-size:32px}.overview-count .count-label{font-size:10px}.sync-line{font-size:11px}.summary-strip strong{font-size:22px}}
+.review-dialog{width:min(600px,calc(100% - 30px))}
+.review-dialog .dialog-inner{display:grid;grid-template-columns:1fr 1fr;column-gap:14px}
+.review-dialog .dialog-inner>:not(label){grid-column:1/-1}
+.review-dialog label:last-of-type{grid-column:1/-1}
+.review-dialog label{margin-top:12px}
+@media(max-width:620px){.review-dialog .dialog-inner{grid-template-columns:1fr}.review-dialog label{grid-column:1/-1}}

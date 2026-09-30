@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../store.js';
-import { finishAndNotify } from '../notify.js';
+import { finishAndNotify, makeDigest } from '../notify.js';
 import { AppError, type MailPage, type Submission } from '../types.js';
 
 process.env.EXMAIL_ACCOUNT='fixture@example.com';
@@ -111,5 +111,32 @@ test('mailbox UID reset persists a fresh checkpoint',()=>{
     assert.throws(()=>ctx.store.savePage(String(run.id),{uidValidity:18,upperUid:2,pageEnd:2,items:[message(2)]}),(error:unknown)=>error instanceof AppError&&error.code==='UIDVALIDITY_CHANGED');
     assert.equal(ctx.store.scanState().uid_validity,18);
     assert.equal(ctx.store.scanState().last_uid,0);
+  }finally{ctx.close();}
+});
+
+test('reviewed interview rounds update the application and keep the task',()=>{
+  const ctx=fixture();
+  try{
+    const run=ctx.store.beginRun();
+    const first=message(1,'示例科技确认收到后端工程师申请。');
+    const second=message(2,'示例科技邀请参加面试，请确认时间。');
+    const batch=ctx.store.savePage(String(run.id),page([first,second],2))!;
+    ctx.store.submit({schema_version:'1',run_id:String(run.id),batch_id:String(batch.id),messages:[
+      {source_key:ctx.store.sourceKey(17,1),classification:'recruitment',updates:[{company:'示例科技',position:'后端工程师',stage:'applied',status:'received',evidence:'确认收到后端工程师申请'}]},
+      {source_key:ctx.store.sourceKey(17,2),classification:'recruitment',updates:[{company:'示例科技',position:null,stage:'interview_1',status:'invited',evidence:'邀请参加面试',needs_review:true,todo:{title:'确认面试时间',due_date:'2026-10-02'}}]},
+    ]});
+    const before=ctx.store.dashboard() as {applications:Array<Record<string,unknown>>;reviews:Array<Record<string,unknown>>};
+    assert.equal(before.reviews.length,1);
+    ctx.store.resolveReview(String(before.reviews[0].id),'示例科技','后端工程师',String(before.applications[0].id),'interview_2','scheduled');
+    const after=ctx.store.dashboard() as {applications:Array<Record<string,unknown>>;reviews:unknown[];todos:Array<Record<string,unknown>>;events:Array<Record<string,unknown>>};
+    assert.equal(after.reviews.length,0);
+    assert.equal(after.applications[0].stage,'interview_2');
+    assert.equal(after.applications[0].status,'scheduled');
+    assert.equal(after.todos.length,1);
+    assert.match(String(after.todos[0].match_key),/interview_2/);
+    assert.equal(after.events.find(event=>event.source_key===ctx.store.sourceKey(17,2))?.stage,'interview_2');
+    assert.match(makeDigest(ctx.store).body,/二面 · 已预约/);
+    ctx.store.editApplication(String(after.applications[0].id),{stage:'interview_3',expected_version:Number(after.applications[0].version)});
+    assert.equal((ctx.store.dashboard() as {applications:Array<Record<string,unknown>>}).applications[0].stage,'interview_3');
   }finally{ctx.close();}
 });

@@ -263,13 +263,18 @@ export class Store {
     this.bumpVersion();
   }
 
-  resolveReview(id: string, company: string, position: string, applicationId?: string): void {
+  resolveReview(id: string, company: string, position: string, applicationId?: string, stage?: string, status?: string): void {
     this.transaction(() => {
       const review=this.db.prepare("SELECT * FROM review_items WHERE id=? AND state='open'").get(id) as Row|undefined;
       if(!review)throw new AppError('REVIEW_NOT_FOUND','待核对事项不存在。');
       const name=clean(company,150),role=clean(position,150);
       if(!name||!role)throw new AppError('BAD_APPLICATION','请填写公司和岗位。');
+      const phase=stage??String(review.stage),result=status??String(review.status);
+      if(!STAGES.includes(phase as typeof STAGES[number])||!STATUSES.includes(result as typeof STATUSES[number]))throw new AppError('BAD_APPLICATION','进展阶段或状态无效。');
+      const event=this.db.prepare('SELECT * FROM events WHERE source_key=? AND ordinal=?').get(String(review.source_key),Number(review.ordinal)) as Row|undefined;
+      if(!event)throw new AppError('EVENT_NOT_FOUND','对应邮件进展不存在。');
       let app:Row|undefined;
+      let created=false;
       if(applicationId){
         app=this.db.prepare('SELECT * FROM applications WHERE id=?').get(applicationId) as Row|undefined;
         if(!app)throw new AppError('APPLICATION_NOT_FOUND','所选岗位不存在。');
@@ -278,15 +283,18 @@ export class Store {
         if(matches.length>1)throw new AppError('AMBIGUOUS_APPLICATION','有多个同名岗位，请明确选择。');
         app=matches[0];
         if(!app){
-          const created=randomUUID();
-          this.db.prepare('INSERT INTO applications(id,company,position,stage,status,last_event_at,manual_stage) VALUES(?,?,?,?,?,?,1)').run(created,name,role,String(review.stage),String(review.status),nowIso());
-          app=this.db.prepare('SELECT * FROM applications WHERE id=?').get(created) as Row;
+          const appId=randomUUID();
+          this.db.prepare('INSERT INTO applications(id,company,position,stage,status,last_event_at) VALUES(?,?,?,?,?,?)').run(appId,name,role,phase,result,String(event.occurred_at));
+          app=this.db.prepare('SELECT * FROM applications WHERE id=?').get(appId) as Row;
+          created=true;
         }
       }
-      this.db.prepare('UPDATE events SET application_id=?,needs_review=0 WHERE source_key=? AND ordinal=?').run(String(app.id),String(review.source_key),Number(review.ordinal));
+      this.db.prepare('UPDATE events SET application_id=?,stage=?,status=?,needs_review=0 WHERE id=?').run(String(app.id),phase,result,String(event.id));
+      if(!created&&!Number(app.manual_stage)&&Date.parse(String(event.occurred_at))>=Date.parse(String(app.last_event_at))){
+        this.db.prepare('UPDATE applications SET stage=?,status=?,last_event_at=?,version=version+1 WHERE id=?').run(phase,result,String(event.occurred_at),String(app.id));
+      }
       if(review.todo_json){
-        const event=this.db.prepare('SELECT * FROM events WHERE source_key=? AND ordinal=?').get(String(review.source_key),Number(review.ordinal)) as Row;
-        this.upsertTodo(String(app.id),String(event.id),{stage:String(event.stage) as UpdateInput['stage'],status:String(event.status) as UpdateInput['status'],round:event.round as string|null,todo:JSON.parse(String(review.todo_json)),evidence:String(event.evidence),company:name,position:role});
+        this.upsertTodo(String(app.id),String(event.id),{stage:phase as UpdateInput['stage'],status:result as UpdateInput['status'],round:event.round as string|null,todo:JSON.parse(String(review.todo_json)),evidence:String(event.evidence),company:name,position:role});
       }
       this.db.prepare("UPDATE review_items SET state='resolved' WHERE id=?").run(id);
       this.bumpVersion();

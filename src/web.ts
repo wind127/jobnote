@@ -41,7 +41,7 @@ export function startWeb(store: Store, port=3210): Promise<void> {
         }else if(segments[1]==='applications'&&segments[3]==='edit'){
           store.editApplication(id,{company:input.company as string|undefined,position:input.position as string|undefined,stage:input.stage as string|undefined,status:input.status as string|undefined,expected_version:Number(input.expected_version)});
         }else if(segments[1]==='reviews'&&segments[3]==='resolve'){
-          store.resolveReview(id,String(input.company??''),String(input.position??''),input.application_id?String(input.application_id):undefined);
+          store.resolveReview(id,String(input.company??''),String(input.position??''),input.application_id?String(input.application_id):undefined,input.stage?String(input.stage):undefined,input.status?String(input.status):undefined);
         }else if(segments[1]==='reviews'&&segments[3]==='ignore'){
           store.ignoreReview(id);
         }else if(segments[1]==='failures'&&segments[3]==='skip'){
