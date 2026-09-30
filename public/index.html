@@ -14,6 +14,7 @@
       <div class="brand"><span class="brand-mark" aria-hidden="true"><span></span></span><div><strong>求职记</strong><small>JOBNOTE</small></div></div>
       <div class="header-side"><span class="local-pill"><span class="signal-dot"></span> <span id="workspace-label">本机工作区</span></span><span id="header-date"></span></div>
     </header>
+    <div class="demo-banner" id="demo-banner" hidden>当前展示虚构演示数据。<a href="http://127.0.0.1:3210/">查看真实求职进展</a></div>
 
     <main>
       <section class="overview" aria-labelledby="page-heading">
@@ -30,6 +31,12 @@
       </section>
 
       <div class="workspace-grid">
+        <section class="applications-column" aria-labelledby="applications-heading">
+          <div class="section-heading application-heading"><div><p class="eyebrow">投递总览</p><h2 id="applications-heading">公司与岗位进展</h2></div><span id="update-time" class="minor-copy"></span></div>
+          <div class="filters"><label class="search-field"><span aria-hidden="true">⌕</span><span class="sr-only">搜索公司或岗位</span><input id="search" type="search" placeholder="搜索公司或岗位" autocomplete="off"></label><label class="select-field"><span class="sr-only">按阶段筛选</span><select id="stage-filter"><option value="">全部阶段</option><option value="applied">已投递</option><option value="screening">简历筛选</option><option value="assessment">测评</option><option value="ai_interview">AI 面试</option><option value="written_test">笔试</option><option value="interview">面试</option><option value="offer">Offer</option><option value="rejected">已结束</option></select></label></div>
+          <div id="application-list" class="application-list"></div>
+        </section>
+
         <aside class="today-column" aria-labelledby="todo-heading">
           <div class="section-heading"><div><p class="eyebrow">下一步</p><h2 id="todo-heading">待办事项</h2></div><span class="count-chip" id="todo-count">0</span></div>
           <div class="todo-list" id="todo-list"></div>
@@ -37,12 +44,6 @@
           <div class="review-panel" id="review-panel" hidden><div class="panel-heading"><span>需要核对</span><span id="review-panel-count"></span></div><div id="review-list"></div></div>
           <div class="failure-panel" id="failure-panel" hidden><div class="panel-heading"><span>邮件处理问题</span><span id="failure-panel-count"></span></div><div id="failure-list"></div></div>
         </aside>
-
-        <section class="applications-column" aria-labelledby="applications-heading">
-          <div class="section-heading application-heading"><div><p class="eyebrow">投递地图</p><h2 id="applications-heading">公司与岗位</h2></div><span id="update-time" class="minor-copy"></span></div>
-          <div class="filters"><label class="search-field"><span aria-hidden="true">⌕</span><span class="sr-only">搜索公司或岗位</span><input id="search" type="search" placeholder="搜索公司或岗位" autocomplete="off"></label><label class="select-field"><span class="sr-only">按阶段筛选</span><select id="stage-filter"><option value="">全部阶段</option><option value="applied">已投递</option><option value="screening">简历筛选</option><option value="assessment">测评</option><option value="ai_interview">AI 面试</option><option value="written_test">笔试</option><option value="interview">面试</option><option value="offer">Offer</option><option value="rejected">已结束</option></select></label></div>
-          <div id="application-list" class="application-list"></div>
-        </section>
       </div>
       <footer class="site-footer">求职记只展示邮件中已有的信息。看不准的变化，请在“需要核对”里确认。</footer>
     </main>

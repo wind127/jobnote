@@ -306,7 +306,9 @@ export class Store {
     const reviews=asRows(this.db.prepare("SELECT * FROM review_items WHERE state='open' ORDER BY created_at DESC").all());
     const failures=asRows(this.db.prepare("SELECT source_key,uid,subject,error,status,skip_reason,updated_at FROM failures WHERE status IN ('pending','skipped','retry_requested') ORDER BY updated_at DESC").all());
     const scan=this.scanState();
+    const active=this.db.prepare("SELECT upper_uid FROM runs WHERE status='active' LIMIT 1").get() as Row | undefined;
+    const scanIncomplete=!!active && (active.upper_uid===null || Number(scan.last_uid)<Number(active.upper_uid));
     const delivery=this.db.prepare('SELECT slot,status,attempted_at,result_code FROM deliveries ORDER BY slot DESC LIMIT 1').get() as Row | undefined;
-    return { version:Number(this.setting('version')??'0'), demo_mode:this.setting('demo_mode')==='true', first_since:scan.first_since, last_success_at:scan.last_success_at, applications,todos,events,reviews,failures,delivery:delivery??null };
+    return { version:Number(this.setting('version')??'0'), demo_mode:this.setting('demo_mode')==='true', first_since:scan.first_since, last_success_at:scan.last_success_at, scan_incomplete:scanIncomplete, applications,todos,events,reviews,failures,delivery:delivery??null };
   }
 }
