@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#17353d">
+  <title>求职记 · 岗位进展</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="site-header">
+      <div class="brand"><span class="brand-mark" aria-hidden="true"><span></span></span><div><strong>求职记</strong><small>JOBNOTE</small></div></div>
+      <div class="header-side"><span class="local-pill"><span class="signal-dot"></span> <span id="workspace-label">本机工作区</span></span><span id="header-date"></span></div>
+    </header>
+
+    <main>
+      <section class="overview" aria-labelledby="page-heading">
+        <div class="overview-copy"><p class="eyebrow">你的求职收件台</p><h1 id="page-heading">把每封回音，放进清楚的进展里。</h1><p class="overview-sub">公司、岗位和下一步，随邮件整理后一起更新。</p><div class="sync-line"><span class="sync-led" id="sync-led"></span><span id="sync-status">正在读取状态…</span></div></div>
+        <div class="overview-count"><span class="count-label">现在需要处理</span><div><strong id="urgent-count">—</strong><span>件事</span></div><small>逾期与未来 48 小时的待办</small></div>
+        <div class="overview-rail" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+      </section>
+
+      <section class="summary-strip" aria-label="进度摘要">
+        <div><span class="summary-marker marker-teal"></span><strong id="company-count">0</strong><span>家公司有进展</span></div>
+        <div><span class="summary-marker marker-blue"></span><strong id="position-count">0</strong><span>个岗位记录</span></div>
+        <div><span class="summary-marker marker-coral"></span><strong id="review-count">0</strong><span>项需要核对</span></div>
+        <div class="delivery-state"><span class="summary-marker marker-slate"></span><span id="delivery-status">微信摘要尚未发送</span></div>
+      </section>
+
+      <div class="workspace-grid">
+        <aside class="today-column" aria-labelledby="todo-heading">
+          <div class="section-heading"><div><p class="eyebrow">下一步</p><h2 id="todo-heading">待办事项</h2></div><span class="count-chip" id="todo-count">0</span></div>
+          <div class="todo-list" id="todo-list"></div>
+          <details class="completed-panel" id="completed-panel" hidden><summary id="completed-heading">已完成</summary><div class="todo-list" id="completed-list"></div></details>
+          <div class="review-panel" id="review-panel" hidden><div class="panel-heading"><span>需要核对</span><span id="review-panel-count"></span></div><div id="review-list"></div></div>
+          <div class="failure-panel" id="failure-panel" hidden><div class="panel-heading"><span>邮件处理问题</span><span id="failure-panel-count"></span></div><div id="failure-list"></div></div>
+        </aside>
+
+        <section class="applications-column" aria-labelledby="applications-heading">
+          <div class="section-heading application-heading"><div><p class="eyebrow">投递地图</p><h2 id="applications-heading">公司与岗位</h2></div><span id="update-time" class="minor-copy"></span></div>
+          <div class="filters"><label class="search-field"><span aria-hidden="true">⌕</span><span class="sr-only">搜索公司或岗位</span><input id="search" type="search" placeholder="搜索公司或岗位" autocomplete="off"></label><label class="select-field"><span class="sr-only">按阶段筛选</span><select id="stage-filter"><option value="">全部阶段</option><option value="applied">已投递</option><option value="screening">简历筛选</option><option value="assessment">测评</option><option value="ai_interview">AI 面试</option><option value="written_test">笔试</option><option value="interview">面试</option><option value="offer">Offer</option><option value="rejected">已结束</option></select></label></div>
+          <div id="application-list" class="application-list"></div>
+        </section>
+      </div>
+      <footer class="site-footer">求职记只展示邮件中已有的信息。看不准的变化，请在“需要核对”里确认。</footer>
+    </main>
+  </div>
+
+  <dialog id="detail-dialog" class="dialog detail-dialog"><div class="dialog-inner"><button class="dialog-close" type="button" data-close="detail-dialog" aria-label="关闭">×</button><div id="detail-content"></div></div></dialog>
+  <dialog id="review-dialog" class="dialog"><form id="review-form" class="dialog-inner"><button class="dialog-close" type="button" data-close="review-dialog" aria-label="关闭">×</button><p class="eyebrow">人工核对</p><h2>确认公司与岗位</h2><p class="form-help">只有你确认后，这条进展才会加入岗位记录。</p><input type="hidden" id="review-id"><label>公司<input id="review-company" required maxlength="150"></label><label>岗位<input id="review-position" required maxlength="150"></label><label>关联已有岗位<select id="review-application"><option value="">自动匹配或新建</option></select></label><button class="primary-button" type="submit">保存进展</button></form></dialog>
+  <dialog id="edit-dialog" class="dialog"><form id="edit-form" class="dialog-inner"><button class="dialog-close" type="button" data-close="edit-dialog" aria-label="关闭">×</button><p class="eyebrow">人工修正</p><h2>修改岗位信息</h2><input type="hidden" id="edit-id"><input type="hidden" id="edit-version"><label>公司<input id="edit-company" required maxlength="150"></label><label>岗位<input id="edit-position" required maxlength="150"></label><label>当前阶段<select id="edit-stage"></select></label><label>状态<select id="edit-status"></select></label><button class="primary-button" type="submit">保存修改</button></form></dialog>
+  <dialog id="skip-dialog" class="dialog"><form id="skip-form" class="dialog-inner"><button class="dialog-close" type="button" data-close="skip-dialog" aria-label="关闭">×</button><p class="eyebrow">邮件处理问题</p><h2>跳过这封邮件</h2><p class="form-help">它会留在问题列表，后续可以重新读取。跳过后，本轮才能继续处理其他邮件。</p><input type="hidden" id="skip-key"><label>原因<textarea id="skip-reason" required maxlength="500" placeholder="例如：邮件只有无法打开的附件"></textarea></label><button class="primary-button" type="submit">确认跳过</button></form></dialog>
+  <div id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
