@@ -1,3 +1,5 @@
+import {STAGE_PROGRESS,compareProgressRows} from './sorting.js';
+
 const STAGE={applied:'投递',screening:'简历筛选',assessment:'测评',written_test:'笔试',ai_interview:'AI 面试',interview_1:'一面',interview_2:'二面',interview_3:'三面',offer:'Offer',rejected:'流程结束'};
 const LEGACY_STAGE={interview:'轮次待核对',other:'阶段待核对'};
 const STATUS={invited:'已邀请',scheduling:'待预约',scheduled:'已预约',completed:'已完成',passed:'已通过',failed:'未通过',cancelled:'已取消',received:'已收到',unknown:'待确认'};
@@ -57,9 +59,8 @@ function renderApplications(){
   const query=$('search').value.trim().toLocaleLowerCase(),stage=$('stage-filter').value;
   const apps=state.applications.filter(app=>(!query||`${app.company} ${app.position}`.toLocaleLowerCase().includes(query))&&stage!=='needs_review'&&(!stage||app.stage===stage));
   const reviews=state.reviews.filter(review=>(!query||`${review.company||''} ${review.position||''}`.toLocaleLowerCase().includes(query))&&(!stage||stage==='needs_review'||review.stage===stage));
-  apps.sort((a,b)=>a.company.localeCompare(b.company,'zh-CN')||a.position.localeCompare(b.position,'zh-CN'));
-  reviews.sort((a,b)=>(a.company||'').localeCompare(b.company||'','zh-CN')||(a.position||'').localeCompare(b.position||'','zh-CN'));
-  if(!apps.length&&!reviews.length){
+  const rows=[...apps.map(record=>({record,review:false})),...reviews.map(record=>({record,review:true}))].sort(compareProgressRows);
+  if(!rows.length){
     list.append(emptyBox(state.applications.length||state.reviews.length?'没有匹配的记录':'暂无岗位记录',state.applications.length||state.reviews.length?'试试其他关键词或阶段。':'运行读信整理任务后，岗位会显示在这里。'));
     return;
   }
@@ -71,32 +72,32 @@ function renderApplications(){
   }
   head.append(headRow);table.append(head);
   const body=el('tbody');
-  for(const app of apps){
-    const row=el('tr');
-    const company=el('td','company-cell');appendText(company,'strong','',app.company);row.append(company);
-    const position=el('td','position-cell');appendText(position,'strong','',app.position);row.append(position);
-    const phase=el('td');appendText(phase,'span',`stage-badge stage-${app.stage}`,stageLabel(app.stage));row.append(phase);
-    appendText(row,'td','status-cell',statusLabel(app.stage,app.status));
-    const next=state.todos.find(todo=>todo.application_id===app.id&&todo.status==='open');
+  const counts=new Map();for(const item of rows)counts.set(item.record.stage,(counts.get(item.record.stage)||0)+1);
+  let currentStage;
+  for(const item of rows){
+    const entry=item.record,phase=entry.stage;
+    if(phase!==currentStage){
+      currentStage=phase;
+      const separator=el('tr',`stage-section-row stage-row-${phase}`),heading=el('th');heading.colSpan=8;heading.scope='rowgroup';
+      const number=STAGE_PROGRESS[phase],step=Number.isInteger(number)&&number>0?String(number).padStart(2,'0'):phase==='rejected'?'终':'?';
+      appendText(heading,'span','section-step',step);appendText(heading,'span','section-name',stageLabel(phase));appendText(heading,'span','section-count',`${counts.get(phase)} 条`);
+      separator.append(heading);body.append(separator);
+    }
+    const row=el('tr',`stage-row stage-row-${phase}${item.review?' review-row':''}`);
+    const company=el('td','company-cell');appendText(company,'strong','',entry.company||'公司待核对');
+    if(item.review)appendText(company,'span','review-flag',entry.mail_count>1?`待核对 · ${entry.mail_count} 封通知`:'待核对');
+    row.append(company);
+    const position=el('td','position-cell');appendText(position,'strong','',entry.position||'岗位待核对');row.append(position);
+    const stageCell=el('td'),badge=el('span','stage-badge');appendText(badge,'span','stage-index',Number.isInteger(STAGE_PROGRESS[phase])&&STAGE_PROGRESS[phase]>0?String(STAGE_PROGRESS[phase]).padStart(2,'0'):phase==='rejected'?'终':'?');appendText(badge,'span','',stageLabel(phase));stageCell.append(badge);row.append(stageCell);
+    appendText(row,'td','status-cell',item.review?`待核对 · ${statusLabel(phase,entry.status)}`:statusLabel(phase,entry.status));
+    const next=item.review?reviewTodo(entry):state.todos.find(todo=>todo.application_id===entry.id&&todo.status==='open');
     appendText(row,'td',next?'next-cell':'muted-cell',next?.title||'—');
     appendText(row,'td','date-cell',next?.due_at?shortDate(next.due_at):next?.due_date?`${next.due_date}（仅日期）`:next?.time_text||'—');
-    appendText(row,'td','date-cell',shortDate(app.last_event_at));
-    const actionCell=el('td');const controls=el('div','table-actions');
-    const view=el('button','outline-button','查看进展');view.type='button';view.onclick=()=>openDetail(app);
-    const edit=el('button','icon-button','编辑');edit.type='button';edit.onclick=()=>openEdit(app);
-    controls.append(view,edit);actionCell.append(controls);row.append(actionCell);body.append(row);
-  }
-  for(const review of reviews){
-    const row=el('tr','review-row'),todo=reviewTodo(review);
-    const company=el('td','company-cell');appendText(company,'strong','',review.company||'公司待核对');appendText(company,'span','review-flag',review.mail_count>1?`待核对 · ${review.mail_count} 封通知`:'待核对');row.append(company);
-    const position=el('td','position-cell');appendText(position,'strong','',review.position||'岗位待核对');row.append(position);
-    const phase=el('td');appendText(phase,'span',`stage-badge stage-${review.stage}`,stageLabel(review.stage));row.append(phase);
-    appendText(row,'td','status-cell',`待核对 · ${statusLabel(review.stage,review.status)}`);
-    appendText(row,'td',todo?'next-cell':'muted-cell',todo?.title||'—');
-    appendText(row,'td','date-cell',todo?.due_at?shortDate(todo.due_at):todo?.due_date?`${todo.due_date}（仅日期）`:todo?.time_text||'—');
-    const event=state.events.find(item=>item.source_key===review.source_key&&item.ordinal===review.ordinal);
-    appendText(row,'td','date-cell',shortDate(event?.occurred_at||review.created_at));
-    const actionCell=el('td');actionCell.append(reviewActions(review));row.append(actionCell);body.append(row);
+    appendText(row,'td','date-cell',shortDate(entry.last_event_at||entry.occurred_at||entry.created_at));
+    const actionCell=el('td');
+    if(item.review)actionCell.append(reviewActions(entry));
+    else{const controls=el('div','table-actions');const view=el('button','outline-button','查看进展');view.type='button';view.onclick=()=>openDetail(entry);const edit=el('button','icon-button','编辑');edit.type='button';edit.onclick=()=>openEdit(entry);controls.append(view,edit);actionCell.append(controls);}
+    row.append(actionCell);body.append(row);
   }
   table.append(body);scroll.append(table);list.append(scroll);
 }

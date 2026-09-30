@@ -1,6 +1,6 @@
 {
   "name": "jobnote",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "A local job application tracker powered by scheduled mailbox reviews.",
   "private": false,
   "type": "module",
@@ -11,7 +11,7 @@
     "build": "tsc && node scripts/copy-public.mjs",
     "start": "node dist/cli.js serve",
     "demo": "npm run build && node scripts/demo.mjs",
-    "test": "npm run build && node --test dist/tests/*.test.js",
+    "test": "npm run build && node --test dist/tests/*.test.js scripts/sorting.test.mjs",
     "check": "tsc --noEmit"
   },
   "devDependencies": {
