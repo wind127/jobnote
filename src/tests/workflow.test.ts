@@ -146,7 +146,7 @@ test('reviewed interview rounds update the application and keep the task',()=>{
     const batch=ctx.store.savePage(String(run.id),page([first,second],2))!;
     ctx.store.submit({schema_version:'1',run_id:String(run.id),batch_id:String(batch.id),messages:[
       {source_key:ctx.store.sourceKey(17,1),classification:'recruitment',updates:[{company:'示例科技',position:'后端工程师',stage:'applied',status:'received',evidence:'确认收到后端工程师申请'}]},
-      {source_key:ctx.store.sourceKey(17,2),classification:'recruitment',updates:[{company:'示例科技',position:null,stage:'interview_1',status:'invited',evidence:'邀请参加面试',needs_review:true,todo:{title:'确认面试时间',due_date:'2026-10-02'}}]},
+      {source_key:ctx.store.sourceKey(17,2),classification:'recruitment',updates:[{company:'示例科技',position:null,stage:'interview',status:'invited',evidence:'邀请参加面试',needs_review:true,todo:{title:'确认面试时间',due_date:'2026-10-02'}}]},
     ]});
     const before=ctx.store.dashboard() as {applications:Array<Record<string,unknown>>;reviews:Array<Record<string,unknown>>};
     assert.equal(before.reviews.length,1);
@@ -161,6 +161,77 @@ test('reviewed interview rounds update the application and keep the task',()=>{
     assert.match(makeDigest(ctx.store).body,/二面 · 待二面/);
     ctx.store.editApplication(String(after.applications[0].id),{stage:'interview_3',expected_version:Number(after.applications[0].version)});
     assert.equal((ctx.store.dashboard() as {applications:Array<Record<string,unknown>>}).applications[0].stage,'interview_3');
+  }finally{ctx.close();}
+});
+
+test('the project reconciles a missing role against one known application and keeps the task',()=>{
+  const ctx=fixture();
+  try{
+    const run=ctx.store.beginRun();
+    const mails=[message(1,'示例科技确认收到后端工程师申请。'),message(2,'示例科技邀请参加在线笔试。')];
+    const batch=ctx.store.savePage(String(run.id),page(mails,2))!;
+    ctx.store.submit({schema_version:'1',run_id:String(run.id),batch_id:String(batch.id),messages:[
+      {source_key:ctx.store.sourceKey(17,1),classification:'recruitment',updates:[{company:'示例科技',position:'后端工程师',stage:'applied',status:'received',evidence:'确认收到后端工程师申请'}]},
+      {source_key:ctx.store.sourceKey(17,2),classification:'recruitment',updates:[{company:'示例科技',position:null,stage:'written_test',status:'invited',evidence:'邀请参加在线笔试',needs_review:true,todo:{title:'完成在线笔试',due_date:'2026-10-08'}}]},
+    ]});
+    const dashboard=ctx.store.dashboard() as {applications:Array<Record<string,unknown>>;reviews:unknown[];events:Array<Record<string,unknown>>;todos:Array<Record<string,unknown>>};
+    assert.equal(dashboard.reviews.length,0);
+    assert.equal(dashboard.applications.length,1);
+    assert.equal(dashboard.applications[0].stage,'written_test');
+    assert.equal(dashboard.events.find(event=>event.source_key===ctx.store.sourceKey(17,2))?.application_id,dashboard.applications[0].id);
+    assert.equal(dashboard.todos.length,1);
+    assert.equal((ctx.store.db.prepare("SELECT resolved_by FROM review_items WHERE source_key=?").get(ctx.store.sourceKey(17,2)) as {resolved_by:string}).resolved_by,'auto');
+    assert.deepEqual(ctx.store.reconcileReviews(),{groups:0,notifications:0,unresolved:0});
+  }finally{ctx.close();}
+});
+
+test('automatic reconciliation leaves multiple possible roles open but matches an explicit role',()=>{
+  const ctx=fixture();
+  try{
+    const run=ctx.store.beginRun();
+    const mails=[
+      message(1,'示例科技确认收到后端工程师申请。'),
+      message(2,'示例科技确认收到算法工程师申请。'),
+      message(3,'示例科技邀请参加在线笔试。'),
+      message(4,'示例科技邀请算法工程师参加在线笔试。'),
+    ];
+    const batch=ctx.store.savePage(String(run.id),page(mails,4))!;
+    ctx.store.submit({schema_version:'1',run_id:String(run.id),batch_id:String(batch.id),messages:mails.map((mail,index)=>({
+      source_key:ctx.store.sourceKey(17,mail.uid),classification:'recruitment',updates:[{
+        company:'示例科技',position:index===0?'后端工程师':index===1||index===3?'算法工程师':null,
+        stage:index<2?'applied':'written_test',status:index<2?'received':'invited',
+        evidence:index===0?'确认收到后端工程师申请':index===1?'确认收到算法工程师申请':index===2?'邀请参加在线笔试':'邀请算法工程师参加在线笔试',
+        needs_review:index>=2,
+      }],
+    }))});
+    const dashboard=ctx.store.dashboard() as {applications:Array<Record<string,unknown>>;reviews:Array<Record<string,unknown>>;events:Array<Record<string,unknown>>};
+    assert.equal(dashboard.reviews.length,1);
+    assert.equal(dashboard.reviews[0].position,null);
+    assert.equal(dashboard.reviews[0].reason,'同公司有多个岗位，邮件未写明归属');
+    const algorithm=dashboard.applications.find(app=>app.position==='算法工程师')!;
+    assert.equal(algorithm.stage,'written_test');
+    assert.equal(dashboard.events.find(event=>event.source_key===ctx.store.sourceKey(17,4))?.application_id,algorithm.id);
+    assert.equal(dashboard.events.find(event=>event.source_key===ctx.store.sourceKey(17,3))?.application_id,null);
+  }finally{ctx.close();}
+});
+
+test('an explicit interview round is reconciled without assigning it to an unnumbered notice',()=>{
+  const ctx=fixture();
+  try{
+    const run=ctx.store.beginRun();
+    const mails=[message(1,'示例科技确认收到后端工程师申请。'),message(2,'示例科技邀请参加面试。'),message(3,'示例科技邀请参加二面。')];
+    const batch=ctx.store.savePage(String(run.id),page(mails,3))!;
+    ctx.store.submit({schema_version:'1',run_id:String(run.id),batch_id:String(batch.id),messages:[
+      {source_key:ctx.store.sourceKey(17,1),classification:'recruitment',updates:[{company:'示例科技',position:'后端工程师',stage:'applied',status:'received',evidence:'确认收到后端工程师申请'}]},
+      {source_key:ctx.store.sourceKey(17,2),classification:'recruitment',updates:[{company:'示例科技',position:'后端工程师',stage:'interview',status:'invited',evidence:'邀请参加面试',needs_review:true}]},
+      {source_key:ctx.store.sourceKey(17,3),classification:'recruitment',updates:[{company:'示例科技',position:'后端工程师',stage:'interview',status:'invited',round:'二面',evidence:'邀请参加二面',needs_review:true}]},
+    ]});
+    const dashboard=ctx.store.dashboard() as {applications:Array<Record<string,unknown>>;reviews:Array<Record<string,unknown>>;events:Array<Record<string,unknown>>};
+    assert.equal(dashboard.reviews.length,1);
+    assert.equal(dashboard.reviews[0].reason,'邮件没有明确面试轮次');
+    assert.equal(dashboard.applications[0].stage,'interview_2');
+    assert.equal(dashboard.events.find(event=>event.source_key===ctx.store.sourceKey(17,2))?.needs_review,1);
+    assert.equal(dashboard.events.find(event=>event.source_key===ctx.store.sourceKey(17,3))?.needs_review,0);
   }finally{ctx.close();}
 });
 

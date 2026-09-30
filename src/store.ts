@@ -67,6 +67,7 @@ export class Store {
       ['batches', 'is_retry', 'INTEGER NOT NULL DEFAULT 0'],
       ['review_items', 'todo_json', 'TEXT'],
       ['review_items', 'application_ref', 'TEXT'],
+      ['review_items', 'resolved_by', 'TEXT'],
     ]) {
       const columns = this.db.prepare(`PRAGMA table_info(${table})`).all() as Row[];
       if (!columns.some(item => item.name === column)) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
@@ -281,6 +282,7 @@ export class Store {
       this.db.prepare("UPDATE failures SET status='resolved',updated_at=? WHERE source_key IN (SELECT source_key FROM batch_messages WHERE batch_id=? AND error IS NULL)").run(nowIso(),String(batch.id));
       this.db.prepare("UPDATE batches SET status='submitted' WHERE id=?").run(String(batch.id));
       this.db.prepare('UPDATE batch_messages SET body=NULL WHERE batch_id=?').run(String(batch.id));
+      this.reconcileReviewsInTransaction();
       this.bumpVersion();
       return { accepted: true, applied, reviews, last_uid: Number(batch.page_end) };
     });
@@ -326,6 +328,94 @@ export class Store {
     return groupReviews(rows).find(group=>group.some(row=>row.id===id)) ?? [selected];
   }
 
+  private inferredRound(group: Row[]): string | null {
+    const found=new Set<string>();
+    for(const member of group){
+      const text=`${String(member.subject??'')} ${String(member.evidence??'')} ${String(member.round??'')}`;
+      const perMail=new Set<string>();
+      if(/(?:一面|第[一1]轮面试|1面)/.test(text))perMail.add('interview_1');
+      if(/(?:二面|第[二2]轮面试|2面)/.test(text))perMail.add('interview_2');
+      if(/(?:三面|第[三3]轮面试|3面)/.test(text))perMail.add('interview_3');
+      if(perMail.size!==1)return null;
+      found.add([...perMail][0]);
+    }
+    return found.size===1?[...found][0]:null;
+  }
+
+  private autoReviewPlan(group: Row[], applications: Row[], allReviews: Row[]): {app:Row;phase:string}|{reason:string} {
+    const companies=[...new Set(group.map(row=>clean(row.company,150)).filter(Boolean).map(keyOf))];
+    if(companies.length!==1)return {reason:'邮件无法确定唯一公司'};
+    const company=companies[0];
+    if(/^通知\s*\d+$/.test(company)||company==='待确认'||company==='未知公司')return {reason:'公司名称只是占位信息'};
+    const roles=[...new Set(group.map(row=>clean(row.position,150)).filter(Boolean).map(keyOf))];
+    const refs=[...new Set(group.map(row=>clean(row.application_ref,100)).filter(Boolean))];
+    if(roles.length>1||refs.length>1)return {reason:'通知中的岗位或申请编号相互冲突'};
+    const rawPhase=String(group.at(-1)?.stage??'');
+    const phase=rawPhase==='interview'?this.inferredRound(group):rawPhase;
+    if(!phase||!SELECTABLE_STAGES.includes(phase as typeof SELECTABLE_STAGES[number]))return {reason:'邮件没有明确面试轮次'};
+    const sameCompany=applications.filter(app=>keyOf(String(app.company))===company);
+    if(!sameCompany.length)return {reason:'尚无可对照的已确认岗位'};
+    if(!roles.length&&!refs.length&&sameCompany.length>1)return {reason:'同公司有多个岗位，邮件未写明归属'};
+    let candidates=sameCompany;
+    if(refs.length)candidates=candidates.filter(app=>clean(app.application_ref,100)===refs[0]);
+    if(roles.length)candidates=candidates.filter(app=>keyOf(String(app.position))===roles[0]);
+    if(candidates.length!==1)return {reason:candidates.length?'存在多个符合条件的岗位':'邮件岗位或申请编号与已有记录不一致'};
+    if(!roles.length&&!refs.length){
+      // A company may have several applications. Even with one known position,
+      // another unresolved mail can identify a different role.
+      const conflictingRole=allReviews.some(row=>keyOf(clean(row.company,150))===company&&clean(row.position,150)&&keyOf(clean(row.position,150))!==keyOf(String(candidates[0].position)));
+      if(conflictingRole)return {reason:'同公司另有不同岗位的待核对通知'};
+    }
+    return {app:candidates[0],phase};
+  }
+
+  private applyReviewGroup(members: Row[], app: Row, phase: string, result: string, resolvedBy: 'auto'|'manual'): void {
+    const review=members.at(-1)!;
+    const event=this.db.prepare('SELECT * FROM events WHERE source_key=? AND ordinal=?').get(String(review.source_key),Number(review.ordinal)) as Row|undefined;
+    if(!event)throw new AppError('EVENT_NOT_FOUND','对应邮件进展不存在。');
+    for(const member of members){
+      const memberEvent=this.db.prepare('SELECT id FROM events WHERE source_key=? AND ordinal=?').get(String(member.source_key),Number(member.ordinal)) as Row|undefined;
+      if(!memberEvent)throw new AppError('EVENT_NOT_FOUND','对应邮件进展不存在。');
+      this.db.prepare('UPDATE events SET application_id=?,stage=?,status=?,needs_review=0 WHERE id=?').run(String(app.id),phase,member.id===review.id?result:String(member.status),String(memberEvent.id));
+      this.db.prepare("UPDATE review_items SET state='resolved',resolved_by=? WHERE id=?").run(resolvedBy,String(member.id));
+    }
+    const isCurrent=Date.parse(String(event.occurred_at))>=Date.parse(String(app.last_event_at));
+    if(!Number(app.manual_stage)&&isCurrent){
+      this.db.prepare('UPDATE applications SET stage=?,status=?,last_event_at=?,version=version+1 WHERE id=?').run(phase,result,String(event.occurred_at),String(app.id));
+    }
+    const lastTask=[...members].reverse().find(member=>member.todo_json);
+    if(lastTask&&isCurrent){
+      const taskEvent=this.db.prepare('SELECT * FROM events WHERE source_key=? AND ordinal=?').get(String(lastTask.source_key),Number(lastTask.ordinal)) as Row;
+      this.upsertTodo(String(app.id),String(taskEvent.id),{stage:phase as UpdateInput['stage'],status:result as UpdateInput['status'],round:taskEvent.round as string|null,todo:JSON.parse(String(lastTask.todo_json)),evidence:String(taskEvent.evidence),company:String(app.company),position:String(app.position)});
+    }
+  }
+
+  private reconcileReviewsInTransaction(dryRun=false): {groups:number;notifications:number;unresolved:number} {
+    const rows=this.openReviewRows();
+    const applications=asRows(this.db.prepare('SELECT * FROM applications').all());
+    let groups=0,notifications=0,reasonChanges=0;
+    for(const members of groupReviews(rows)){
+      const plan=this.autoReviewPlan(members,applications,rows);
+      if('reason' in plan){
+        if(!dryRun)for(const member of members)if(member.reason!==plan.reason){
+          this.db.prepare("UPDATE review_items SET reason=? WHERE id=? AND state='open'").run(plan.reason,String(member.id));
+          reasonChanges++;
+        }
+        continue;
+      }
+      groups++;
+      notifications+=members.length;
+      if(!dryRun)this.applyReviewGroup(members,plan.app,plan.phase,String(members.at(-1)!.status),'auto');
+    }
+    if((groups||reasonChanges)&&!dryRun)this.bumpVersion();
+    return {groups,notifications,unresolved:rows.length-notifications};
+  }
+
+  reconcileReviews(dryRun=false): {groups:number;notifications:number;unresolved:number} {
+    if(dryRun)return this.reconcileReviewsInTransaction(true);
+    return this.transaction(()=>this.reconcileReviewsInTransaction());
+  }
+
   resolveReview(id: string, company: string, position: string, applicationId?: string, stage?: string, status?: string): void {
     this.transaction(() => {
       const members=this.reviewMembers(id);
@@ -337,7 +427,6 @@ export class Store {
       const event=this.db.prepare('SELECT * FROM events WHERE source_key=? AND ordinal=?').get(String(review.source_key),Number(review.ordinal)) as Row|undefined;
       if(!event)throw new AppError('EVENT_NOT_FOUND','对应邮件进展不存在。');
       let app:Row|undefined;
-      let created=false;
       if(applicationId){
         app=this.db.prepare('SELECT * FROM applications WHERE id=?').get(applicationId) as Row|undefined;
         if(!app)throw new AppError('APPLICATION_NOT_FOUND','所选岗位不存在。');
@@ -351,21 +440,9 @@ export class Store {
           const appId=randomUUID();
           this.db.prepare('INSERT INTO applications(id,company,position,application_ref,stage,status,last_event_at) VALUES(?,?,?,?,?,?,?)').run(appId,name,role,ref||null,phase,result,String(event.occurred_at));
           app=this.db.prepare('SELECT * FROM applications WHERE id=?').get(appId) as Row;
-          created=true;
         }
       }
-      for(const member of members){
-        const memberEvent=this.db.prepare('SELECT id FROM events WHERE source_key=? AND ordinal=?').get(String(member.source_key),Number(member.ordinal)) as Row|undefined;
-        if(!memberEvent)throw new AppError('EVENT_NOT_FOUND','对应邮件进展不存在。');
-        this.db.prepare('UPDATE events SET application_id=?,stage=?,status=?,needs_review=0 WHERE id=?').run(String(app.id),phase,member.id===review.id?result:String(member.status),String(memberEvent.id));
-        this.db.prepare("UPDATE review_items SET state='resolved' WHERE id=?").run(String(member.id));
-      }
-      if(!created&&!Number(app.manual_stage)&&Date.parse(String(event.occurred_at))>=Date.parse(String(app.last_event_at))){
-        this.db.prepare('UPDATE applications SET stage=?,status=?,last_event_at=?,version=version+1 WHERE id=?').run(phase,result,String(event.occurred_at),String(app.id));
-      }
-      if(review.todo_json){
-        this.upsertTodo(String(app.id),String(event.id),{stage:phase as UpdateInput['stage'],status:result as UpdateInput['status'],round:event.round as string|null,todo:JSON.parse(String(review.todo_json)),evidence:String(event.evidence),company:name,position:role});
-      }
+      this.applyReviewGroup(members,app,phase,result,'manual');
       this.bumpVersion();
     });
   }

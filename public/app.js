@@ -60,7 +60,7 @@ function applicationRow(item,extraClass='',detailIndex=-1){
   const company=el('td','company-cell');appendText(company,'strong','',detailIndex>=0?`通知 ${detailIndex+1}`:entry.company||'公司待核对');
   if(item.review)appendText(company,'span','review-flag',entry.mail_count>1?`${entry.mail_count} 封邮件`:'待核对');
   row.append(company);
-  const position=el('td','position-cell');appendText(position,'strong','',entry.position||'岗位待核对');row.append(position);
+  const position=el('td','position-cell');appendText(position,'strong','',entry.position||'岗位待核对');if(item.review&&entry.reason)appendText(position,'span','review-reason',entry.reason);row.append(position);
   const stageCell=el('td');stageCell.append(stageBadge(phase));row.append(stageCell);
   appendText(row,'td','status-cell',statusLabel(phase,entry.status));
   const next=item.review?reviewTodo(entry):state.todos.find(todo=>todo.application_id===entry.id&&todo.status==='open');
@@ -88,9 +88,9 @@ function reviewClusterRows(item,firstInStage){
   const deadlines=[...new Set(tasks.map(todo=>todo.due_at?shortDate(todo.due_at):todo.due_date?`${todo.due_date}（仅日期）`:todo.time_text).filter(Boolean))];
   appendText(row,'td','date-cell',deadlines.length===1?deadlines[0]:deadlines.length>1?'多个时间':'—');
   appendText(row,'td','date-cell',shortDate(entry.occurred_at||entry.created_at));
-  const actionCell=el('td'),toggle=el('button','outline-button','展开核对');toggle.type='button';toggle.setAttribute('aria-expanded','false');
+  const actionCell=el('td'),toggle=el('button','outline-button','查看待确认邮件');toggle.type='button';toggle.setAttribute('aria-expanded','false');
   const details=reviews.map((review,index)=>{const detail=applicationRow({record:review,review:true},'cluster-detail',index);detail.hidden=true;return detail;});
-  toggle.onclick=()=>{const open=toggle.getAttribute('aria-expanded')!=='true';toggle.setAttribute('aria-expanded',String(open));toggle.textContent=open?'收起明细':'展开核对';details.forEach(detail=>{detail.hidden=!open;});};
+  toggle.onclick=()=>{const open=toggle.getAttribute('aria-expanded')!=='true';toggle.setAttribute('aria-expanded',String(open));toggle.textContent=open?'收起明细':'查看待确认邮件';details.forEach(detail=>{detail.hidden=!open;});};
   actionCell.append(toggle);row.append(actionCell);
   return [row,...details];
 }

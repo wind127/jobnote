@@ -42,6 +42,6 @@
 }
 ```
 
-可用分类：`recruitment`、`promotion`、`unrelated`、`uncertain`、`skipped`。非招聘邮件的 `updates` 必须是空数组。招聘邮件至少提供一条进展；公司、岗位或归属不确定时仍使用 `recruitment`，将 `needs_review` 设为 `true`，由用户在网页核对，不能猜测。无法判断是否为招聘邮件时使用 `uncertain` 且 `updates` 为空。可确认的阶段值：`applied`、`screening`、`assessment`、`written_test`、`ai_interview`、`interview_1`、`interview_2`、`interview_3`、`offer`、`rejected`。邮件明确写出一面、二面或三面时使用对应阶段；只写“面试”而没有轮次时，用内部值 `interview` 并同时设置 `needs_review:true`，让网页显示“轮次待核对”，不能推测轮次。不要使用 `other`。状态值：`invited`、`scheduling`、`scheduled`、`completed`、`passed`、`failed`、`cancelled`、`received`、`unknown`。网页会将待进行的测评、笔试和面试显示为“待测评”“待笔试”“待AI面试”“待一面”等。没有明确截止时间时保留 `due_at`、`due_date` 为 `null`，可用 `time_text` 保存原文描述，不能推测精确日期。
+可用分类：`recruitment`、`promotion`、`unrelated`、`uncertain`、`skipped`。非招聘邮件的 `updates` 必须是空数组。招聘邮件至少提供一条进展；公司、岗位或归属不确定时仍使用 `recruitment`，将 `needs_review` 设为 `true`，项目先用已确认岗位自动核对；只有无法唯一判断的记录才留给用户，不能猜测。无法判断是否为招聘邮件时使用 `uncertain` 且 `updates` 为空。可确认的阶段值：`applied`、`screening`、`assessment`、`written_test`、`ai_interview`、`interview_1`、`interview_2`、`interview_3`、`offer`、`rejected`。邮件明确写出一面、二面或三面时使用对应阶段；只写“面试”而没有轮次时，用内部值 `interview` 并同时设置 `needs_review:true`，让网页显示“轮次待核对”，不能推测轮次。不要使用 `other`。状态值：`invited`、`scheduling`、`scheduled`、`completed`、`passed`、`failed`、`cancelled`、`received`、`unknown`。网页会将待进行的测评、笔试和面试显示为“待测评”“待笔试”“待AI面试”“待一面”等。没有明确截止时间时保留 `due_at`、`due_date` 为 `null`，可用 `time_text` 保存原文描述，不能推测精确日期。
 
 所有进展以正文原文为依据。招聘广告、校招公告等无个人申请进展的邮件可列为 `promotion`。从 `batch` 拿到的正文仅用于当前批整理；不要将其粘贴到群聊或提交到代码仓库。

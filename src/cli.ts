@@ -18,17 +18,19 @@ async function stdinText():Promise<string>{
 
 async function main():Promise<void>{
   if(command==='help'){
-    console.log(`求职记命令\n\n  serve                   启动本地网页\n  begin                   开始或恢复本轮\n  batch [--limit 20]      取得下一批邮件 JSON（默认 100 封）\n  submit <file|->         提交与批次逐封对应的整理结果\n  finish                  完成本轮并生成微信摘要\n  digest                  预览当前摘要，不推送\n  abort-run --confirm-stopped   确认旧任务停止后中止当前运行\n  doctor                  检查本地配置（不连接邮箱）`);
+    console.log(`求职记命令\n\n  serve                   启动本地网页\n  begin                   开始或恢复本轮\n  batch [--limit 20]      取得下一批邮件 JSON（默认 100 封）\n  submit <file|->         提交与批次逐封对应的整理结果\n  reconcile [--dry-run]   用已确认岗位自动核对邮件进展\n  finish                  完成本轮并生成微信摘要\n  digest                  预览当前摘要，不推送\n  abort-run --confirm-stopped   确认旧任务停止后中止当前运行\n  doctor                  检查本地配置（不连接邮箱）`);
     return;
   }
   const store=new Store(dataDir);
   if(command==='serve'){
+    store.reconcileReviews();
     await startWeb(store,Number(process.env.JOBNOTE_PORT??3210));
     return;
   }
   try{
     let result:unknown;
     if(command==='begin')result=store.beginRun();
+    else if(command==='reconcile')result=store.reconcileReviews(process.argv[3]==='--dry-run');
     else if(command==='batch'){
       const requestedLimit=process.argv[3]==='--limit'?Number(process.argv[4]):100;
       if(!Number.isSafeInteger(requestedLimit)||requestedLimit<1||requestedLimit>100)throw new AppError('BAD_LIMIT','单批邮件数量应为 1 到 100。');
