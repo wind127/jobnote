@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../store.js';
-import { finishAndNotify, makeDigest } from '../notify.js';
+import { finishRun, makeDigest } from '../notify.js';
 import { AppError, progressStatusLabel, type MailPage, type Submission } from '../types.js';
 
 process.env.EXMAIL_ACCOUNT='fixture@example.com';
@@ -72,32 +72,30 @@ test('failed message blocks the page until the user skips it; later retry keeps 
   }finally{ctx.close();}
 });
 
-test('one time slot can only send once and a lost response is not retried',async()=>{
+test('one time slot only produces one digest and the next includes new progress',()=>{
   const ctx=fixture();
-  const original=process.env.SERVERCHAN_SENDKEY;
-  process.env.SERVERCHAN_SENDKEY='SCT0123456789abcdefghi';
   try{
     const date=new Date('2026-09-30T00:00:00Z');
     const run=ctx.store.beginRun(date);
     const batch=ctx.store.savePage(String(run.id),page([message(1)],1))!;
     ctx.store.submit(submission(ctx.store,String(run.id),String(batch.id),[1]));
-    let sends=0;
-    const sender=(async()=>{sends++;return new Response(JSON.stringify({code:0}),{status:200,headers:{'content-type':'application/json'}});}) as typeof fetch;
-    const sent=await finishAndNotify(ctx.store,sender,date);
-    assert.deepEqual(sent,{slot:0,status:'accepted'});
+    const sent=finishRun(ctx.store,date) as {slot:number;should_send:boolean;title:string;body:string};
+    assert.equal(sent.slot,0);
+    assert.equal(sent.should_send,true);
+    assert.match(sent.body,/示例科技/);
     const nextRun=ctx.store.beginRun(new Date(date.getTime()+60_000));
     ctx.store.savePage(String(nextRun.id),page([],1));
-    const repeated=await finishAndNotify(ctx.store,sender,new Date(date.getTime()+60_000));
-    assert.deepEqual(repeated,{slot:0,status:'accepted'});
-    assert.equal(sends,1);
+    const repeated=finishRun(ctx.store,new Date(date.getTime()+60_000));
+    assert.deepEqual(repeated,{slot:0,should_send:false});
     const later=new Date(date.getTime()+14_400_000);
     const third=ctx.store.beginRun(later);
-    ctx.store.savePage(String(third.id),page([],1));
-    const uncertain=await finishAndNotify(ctx.store,(async()=>{sends++;throw Error('network lost');}) as typeof fetch,later);
-    assert.deepEqual(uncertain,{slot:1,status:'unknown'});
-    assert.equal(sends,2);
+    const nextBatch=ctx.store.savePage(String(third.id),page([message(2)],2))!;
+    ctx.store.submit(submission(ctx.store,String(third.id),String(nextBatch.id),[2]));
+    const next=finishRun(ctx.store,later) as {slot:number;should_send:boolean;body:string};
+    assert.equal(next.slot,1);
+    assert.equal(next.should_send,true);
+    assert.match(next.body,/新进展 1 项/);
   }finally{
-    if(original===undefined)delete process.env.SERVERCHAN_SENDKEY;else process.env.SERVERCHAN_SENDKEY=original;
     ctx.close();
   }
 });

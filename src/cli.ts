@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { Store } from './store.js';
 import { readPage } from './mail.js';
-import { finishAndNotify, makeDigest } from './notify.js';
+import { finishRun, makeDigest } from './notify.js';
 import { startWeb } from './web.js';
 import { AppError, type Submission } from './types.js';
 
@@ -18,7 +18,7 @@ async function stdinText():Promise<string>{
 
 async function main():Promise<void>{
   if(command==='help'){
-    console.log(`求职记命令\n\n  serve                   启动本地网页\n  begin                   开始或恢复本轮\n  batch [--limit 20]      取得下一批邮件 JSON（默认 100 封）\n  submit <file|->         提交与批次逐封对应的整理结果\n  finish                  完成本轮并推送一份微信摘要\n  digest                  预览当前摘要，不推送\n  abort-run --confirm-stopped   确认旧任务停止后中止当前运行\n  doctor                  检查本地配置（不连接邮箱）`);
+    console.log(`求职记命令\n\n  serve                   启动本地网页\n  begin                   开始或恢复本轮\n  batch [--limit 20]      取得下一批邮件 JSON（默认 100 封）\n  submit <file|->         提交与批次逐封对应的整理结果\n  finish                  完成本轮并生成微信摘要\n  digest                  预览当前摘要，不推送\n  abort-run --confirm-stopped   确认旧任务停止后中止当前运行\n  doctor                  检查本地配置（不连接邮箱）`);
     return;
   }
   const store=new Store(dataDir);
@@ -62,19 +62,17 @@ async function main():Promise<void>{
       let payload:Submission;
       try{payload=JSON.parse(text) as Submission;}catch{throw new AppError('BAD_JSON','整理结果不是有效 JSON。');}
       result=store.submit(payload);
-    }else if(command==='finish')result=await finishAndNotify(store);
+    }else if(command==='finish')result=finishRun(store);
     else if(command==='digest')result=makeDigest(store);
     else if(command==='doctor'){
       const skill=process.env.QQEXMAIL_SKILL_DIR??'';
       const account=process.env.EXMAIL_ACCOUNT??'';
       const auth=process.env.EXMAIL_AUTH_CODE??'';
-      const sendKey=process.env.SERVERCHAN_SENDKEY??'';
       result={
         node:process.version,
         skill_dir_configured:!!skill && existsSync(join(skill,'SKILL.md')) && existsSync(join(skill,'package.json')),
         mail_account_configured:/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(account) && !/your-|example|placeholder/i.test(account),
         mail_auth_configured:auth.length>=6 && !/your-|example|placeholder/i.test(auth),
-        wechat_configured:/^SCT[A-Za-z0-9_-]{10,}$/.test(sendKey),
         data_dir:dataDir,
       };
     }

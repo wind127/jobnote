@@ -14,7 +14,7 @@
 
 `腾讯企业邮箱 → 千问办公定时整理 → 本机网页 + 微信摘要`
 
-目前是**本机单用户预发布版**：支持一个腾讯企业邮箱收件箱，复用本机 [`qqexmail` 技能](docs/QQEXMAIL_REFERENCE.md)，通过千问办公执行定时任务，微信提醒使用 Server酱。Gmail、普通 QQ 邮箱和教育邮箱尚未接入。
+目前是**本机单用户预发布版**：支持一个腾讯企业邮箱收件箱，复用本机 [`qqexmail` 技能](docs/QQEXMAIL_REFERENCE.md)。千问办公负责定时整理，并通过已连接的微信 IM 频道发送结果。Gmail、普通 QQ 邮箱和教育邮箱尚未接入。
 
 ## 先看演示
 
@@ -38,14 +38,14 @@ npm run build
 Copy-Item .env.example .env
 ```
 
-在 `.env` 中填写技能目录、腾讯企业邮箱账号、客户端授权码和 Server酱 SendKey。然后运行：
+在 `.env` 中填写技能目录、腾讯企业邮箱账号和客户端授权码。然后运行：
 
 ```powershell
 node --env-file=.env dist/cli.js doctor
 node --env-file=.env dist/cli.js serve
 ```
 
-打开 <http://127.0.0.1:3210>。接着按照[千问办公定时任务说明](docs/QWENWORK_TASK.md)，建立一项每 4 小时运行的任务。邮件读取为只读模式，网页和记录保存在本机；微信摘要会经 Server酱发送公司、岗位、待办与时间。
+打开 <http://127.0.0.1:3210>。接着按照[千问办公定时任务说明](docs/QWENWORK_TASK.md)，建立一项每 4 小时运行的任务，并将任务结果指定发送到已连接的微信 IM 会话。邮件读取为只读模式，网页和记录保存在本机；摘要由千问办公转发到微信。
 
 ## 当前进度
 

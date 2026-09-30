@@ -28,12 +28,11 @@ export class Store {
       CREATE TABLE IF NOT EXISTS applications (id TEXT PRIMARY KEY, company TEXT NOT NULL, position TEXT NOT NULL, application_ref TEXT, stage TEXT NOT NULL, status TEXT NOT NULL, last_event_at TEXT NOT NULL, manual_stage INTEGER NOT NULL DEFAULT 0, version INTEGER NOT NULL DEFAULT 1);
       CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, source_key TEXT NOT NULL REFERENCES mail_sources(source_key), ordinal INTEGER NOT NULL, application_id TEXT REFERENCES applications(id), stage TEXT NOT NULL, status TEXT NOT NULL, round TEXT, occurred_at TEXT NOT NULL, evidence TEXT NOT NULL, needs_review INTEGER NOT NULL DEFAULT 0, UNIQUE(source_key,ordinal));
       CREATE TABLE IF NOT EXISTS todos (id TEXT PRIMARY KEY, application_id TEXT REFERENCES applications(id), event_id TEXT NOT NULL REFERENCES events(id), match_key TEXT NOT NULL, title TEXT NOT NULL, due_at TEXT, due_date TEXT, time_text TEXT, status TEXT NOT NULL DEFAULT 'open', manual_status INTEGER NOT NULL DEFAULT 0, version INTEGER NOT NULL DEFAULT 1, UNIQUE(application_id,match_key));
-      CREATE TABLE IF NOT EXISTS deliveries (slot INTEGER PRIMARY KEY, status TEXT NOT NULL, summary TEXT NOT NULL, attempted_at TEXT, result_code TEXT, event_cursor INTEGER);
+      CREATE TABLE IF NOT EXISTS digest_runs (slot INTEGER PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL, generated_at TEXT NOT NULL, event_cursor INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS review_items (id TEXT PRIMARY KEY, source_key TEXT NOT NULL, ordinal INTEGER NOT NULL, reason TEXT NOT NULL, company TEXT, position TEXT, stage TEXT, status TEXT, evidence TEXT NOT NULL, todo_json TEXT, created_at TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'open');
     `);
     for (const [table, column, definition] of [
       ['batches', 'is_retry', 'INTEGER NOT NULL DEFAULT 0'],
-      ['deliveries', 'event_cursor', 'INTEGER'],
       ['review_items', 'todo_json', 'TEXT'],
     ]) {
       const columns = this.db.prepare(`PRAGMA table_info(${table})`).all() as Row[];
@@ -317,7 +316,6 @@ export class Store {
     const scan=this.scanState();
     const active=this.db.prepare("SELECT upper_uid FROM runs WHERE status='active' LIMIT 1").get() as Row | undefined;
     const scanIncomplete=!!active && (active.upper_uid===null || Number(scan.last_uid)<Number(active.upper_uid));
-    const delivery=this.db.prepare('SELECT slot,status,attempted_at,result_code FROM deliveries ORDER BY slot DESC LIMIT 1').get() as Row | undefined;
-    return { version:Number(this.setting('version')??'0'), demo_mode:this.setting('demo_mode')==='true', first_since:scan.first_since, last_success_at:scan.last_success_at, scan_incomplete:scanIncomplete, applications,todos,events,reviews,failures,delivery:delivery??null };
+    return { version:Number(this.setting('version')??'0'), demo_mode:this.setting('demo_mode')==='true', first_since:scan.first_since, last_success_at:scan.last_success_at, scan_incomplete:scanIncomplete, applications,todos,events,reviews,failures };
   }
 }

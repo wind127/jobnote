@@ -17,9 +17,9 @@ function localTime(value: string | null): string {
 
 export function makeDigest(store: Store, at = new Date()): {title:string;body:string;eventCursor:number} {
   const todos=store.db.prepare(`SELECT t.*,a.company,a.position FROM todos t LEFT JOIN applications a ON a.id=t.application_id WHERE t.status='open'`).all() as Row[];
-  const lastAccepted=store.db.prepare("SELECT event_cursor FROM deliveries WHERE status='accepted' ORDER BY slot DESC LIMIT 1").get() as Row | undefined;
+  const lastDigest=store.db.prepare('SELECT event_cursor FROM digest_runs ORDER BY slot DESC LIMIT 1').get() as Row | undefined;
   const eventCursor=Number((store.db.prepare('SELECT COALESCE(MAX(rowid),0) AS cursor FROM events').get() as Row).cursor);
-  const recent=store.db.prepare(`SELECT e.rowid,e.stage,e.status,a.company,a.position FROM events e LEFT JOIN applications a ON a.id=e.application_id WHERE e.rowid>? AND e.needs_review=0 ORDER BY e.rowid DESC LIMIT 20`).all(Number(lastAccepted?.event_cursor ?? 0)) as Row[];
+  const recent=store.db.prepare(`SELECT e.rowid,e.stage,e.status,a.company,a.position FROM events e LEFT JOIN applications a ON a.id=e.application_id WHERE e.rowid>? AND e.needs_review=0 ORDER BY e.rowid DESC LIMIT 20`).all(Number(lastDigest?.event_cursor ?? 0)) as Row[];
   const failed=store.db.prepare("SELECT COUNT(*) AS count FROM failures WHERE status IN ('pending','skipped','retry_requested')").get() as Row;
   const soon=at.getTime()+48*3600_000;
   const rank=(todo:Row): number => {
@@ -51,46 +51,21 @@ export function makeDigest(store: Store, at = new Date()): {title:string;body:st
   return {title:`求职记待办 · ${new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',month:'numeric',day:'numeric'}).format(at)}`,body:lines.join('\n'),eventCursor};
 }
 
-export async function finishAndNotify(store: Store, sender: typeof fetch = fetch, at = new Date()): Promise<object> {
+export function finishRun(store: Store, at = new Date()): object {
   const anchor=store.setting('anchor_at');
   if(!anchor)throw new AppError('NO_RUN','先运行邮件整理。');
   const slot=currentSlot(anchor,at);
-  const claim=store.transaction(() => {
+  return store.transaction(() => {
     const run=store.activeRun();
     if(store.activeBatch(String(run.id)))throw new AppError('BATCH_OPEN','当前批次尚未提交。');
     const scan=store.scanState();
     if(run.upper_uid===null || Number(scan.last_uid)<Number(run.upper_uid))throw new AppError('SCAN_INCOMPLETE','本轮还有未读取邮件，请继续执行 batch。');
     store.db.prepare("UPDATE runs SET status='complete',finished_at=? WHERE id=?").run(at.toISOString(),String(run.id));
-    const existing=store.db.prepare('SELECT slot,status FROM deliveries WHERE slot=?').get(slot) as Row|undefined;
-    if(existing)return {send:false,status:String(existing.status),slot};
+    const existing=store.db.prepare('SELECT slot FROM digest_runs WHERE slot=?').get(slot) as Row|undefined;
+    if(existing){store.bumpVersion();return {slot,should_send:false};}
     const digest=makeDigest(store,at);
-    store.db.prepare("INSERT INTO deliveries(slot,status,summary,attempted_at,event_cursor) VALUES(?,'sending',?,?,?)").run(slot,digest.title+'\n'+digest.body,at.toISOString(),digest.eventCursor);
+    store.db.prepare('INSERT INTO digest_runs(slot,title,body,generated_at,event_cursor) VALUES(?,?,?,?,?)').run(slot,digest.title,digest.body,at.toISOString(),digest.eventCursor);
     store.bumpVersion();
-    return {send:true,slot,digest};
+    return {slot,should_send:true,title:digest.title,body:digest.body};
   });
-  if(!claim.send)return {slot,status:claim.status};
-  const digest=claim.digest!;
-  const sendKey=process.env.SERVERCHAN_SENDKEY;
-  if(!sendKey || !/^SCT[A-Za-z0-9_-]{10,}$/.test(sendKey)){
-    store.db.prepare("UPDATE deliveries SET status='failed',result_code='CONFIG_MISSING' WHERE slot=?").run(slot);
-    store.bumpVersion();
-    return {slot,status:'failed',reason:'微信 SendKey 未配置或格式无效'};
-  }
-  try {
-    const response=await sender(`https://sctapi.ftqq.com/${encodeURIComponent(sendKey)}.send`,{
-      method:'POST',headers:{'content-type':'application/json'},redirect:'error',
-      body:JSON.stringify({title:digest.title,desp:digest.body}),signal:AbortSignal.timeout(15000),
-    });
-    let reply:unknown;
-    try{reply=await response.json();}catch{reply=null;}
-    const code=reply && typeof reply==='object' && 'code' in reply ? (reply as {code:unknown}).code : null;
-    const status=response.ok && code===0?'accepted':code!==null?'failed':'unknown';
-    store.db.prepare('UPDATE deliveries SET status=?,result_code=? WHERE slot=?').run(status,typeof code==='number'?String(code):String(response.status),slot);
-    store.bumpVersion();
-    return {slot,status};
-  }catch{
-    store.db.prepare("UPDATE deliveries SET status='unknown',result_code='TRANSPORT_UNKNOWN' WHERE slot=?").run(slot);
-    store.bumpVersion();
-    return {slot,status:'unknown'};
-  }
 }
