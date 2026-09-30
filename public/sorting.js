@@ -31,3 +31,21 @@ export function compareProgressRows(a,b){
     ||String(first.company??'').localeCompare(String(second.company??''),'zh-CN')
     ||String(first.position??'').localeCompare(String(second.position??''),'zh-CN');
 }
+
+// A cluster is a visual inbox for uncertain notices from the same employer and
+// stage. Members keep their own IDs and actions; no applications are merged.
+export function groupProgressRows(applications,reviews){
+  const buckets=new Map();
+  for(const review of reviews){
+    const company=normalize(review.company);
+    const key=company?`${company}|${review.stage}`:`${review.id}`;
+    const group=buckets.get(key)??[];
+    group.push(review);
+    buckets.set(key,group);
+  }
+  const pending=[...buckets.values()].map(group=>{
+    group.sort((a,b)=>compareProgressRows({record:a,review:true},{record:b,review:true}));
+    return {record:group[0],review:true,cluster:group.length>1?group:null};
+  });
+  return [...applications.map(record=>({record,review:false,cluster:null})),...pending].sort(compareProgressRows);
+}

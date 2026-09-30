@@ -296,3 +296,33 @@ test('identical nearby reminders with no role collapse, while later notices stay
     assert.deepEqual(reviews.map(review=>review.mail_count).sort(),[1,2]);
   }finally{ctx.close();}
 });
+
+test('matching dated tasks without a role collapse despite different mail wording',()=>{
+  const ctx=fixture();
+  try{
+    const run=ctx.store.beginRun();
+    const mails=[
+      {...message(1,'面试邀请'),receivedAt:'2026-09-10T08:00:00.000Z'},
+      {...message(2,'面试提醒'),receivedAt:'2026-09-11T08:00:00.000Z'},
+      {...message(3,'另一场面试'),receivedAt:'2026-09-11T09:00:00.000Z'},
+      {...message(4,'另一申请的面试'),receivedAt:'2026-09-11T10:00:00.000Z'},
+    ];
+    const batch=ctx.store.savePage(String(run.id),page(mails,4))!;
+    ctx.store.submit({schema_version:'1',run_id:String(run.id),batch_id:String(batch.id),messages:mails.map((mail,index)=>( {
+      source_key:ctx.store.sourceKey(17,mail.uid),classification:'recruitment',updates:[{
+        company:'示例银行',position:null,stage:'interview_1',status:'scheduled',needs_review:true,
+        application_ref:index===3?'OTHER':undefined,
+        evidence:['面试邀请','面试提醒','另一场面试','另一申请的面试'][index],
+        todo:{title:'参加视频面试',due_at:index===2?'2026-09-13T08:00:00.000Z':'2026-09-12T08:00:00.000Z'},
+      }],
+    }))});
+    const before=ctx.store.dashboard() as {reviews:Array<Record<string,unknown>>;events:Array<Record<string,unknown>>};
+    assert.equal(before.reviews.length,3);
+    assert.deepEqual(before.reviews.map(review=>review.mail_count).sort(),[1,1,2]);
+    assert.equal(before.events.length,4);
+    const grouped=before.reviews.find(review=>review.mail_count===2)!;
+    ctx.store.ignoreReview(String(grouped.id));
+    assert.equal((ctx.store.dashboard() as {reviews:unknown[]}).reviews.length,2);
+    assert.equal((ctx.store.db.prepare("SELECT count(*) count FROM review_items WHERE state='ignored'").get() as {count:number}).count,2);
+  }finally{ctx.close();}
+});

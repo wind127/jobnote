@@ -1,6 +1,6 @@
 {
   "name": "jobnote",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "A local job application tracker powered by scheduled mailbox reviews.",
   "private": false,
   "type": "module",

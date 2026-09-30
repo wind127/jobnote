@@ -29,11 +29,7 @@
 .section-heading h2{font-size:22px}
 .application-heading{margin-bottom:15px}
 .workspace-grid{gap:34px;margin-top:29px}
-.review-row,.applications-table .review-row td:first-child{background:#fffbf4}
-.applications-table .review-row:hover,.applications-table .review-row:hover td:first-child{background:#fff7e8}
-.review-row .company-cell{border-left:3px solid #dfa968;padding-left:13px}
-.review-flag{display:block;margin-top:4px;color:#a36b2b;font-size:10px;font-weight:800}
-.review-row .status-cell{color:#9b6c33}
+.review-flag{display:table;width:max-content;max-width:100%;margin-top:6px;border-radius:5px;background:#fff3e3;color:#9b6b32;padding:3px 6px;font-size:10px;font-weight:750}
 .todos-table{min-width:810px}
 .todos-table .table-actions,.applications-table .table-actions{display:flex;align-items:center;gap:9px;white-space:nowrap}
 .todos-table .quiet-action,.applications-table .quiet-action{padding:5px 0;font-size:11px}
@@ -47,31 +43,33 @@
 .review-dialog label{margin-top:12px}
 @media(max-width:620px){.review-dialog .dialog-inner{grid-template-columns:1fr}.review-dialog label{grid-column:1/-1}}
 
-/* The stage rail follows the real application sequence from delivery to offer. */
-.sort-caption{margin:-5px 0 13px;color:var(--muted);font-size:11px;letter-spacing:.01em}
-.stage-row-applied{--stage-ink:#627d96;--stage-wash:#f0f5f9}
-.stage-row-screening{--stage-ink:#43749b;--stage-wash:#eaf3f9}
-.stage-row-assessment{--stage-ink:#21869a;--stage-wash:#e7f5f8}
-.stage-row-written_test{--stage-ink:#178372;--stage-wash:#e5f4ef}
-.stage-row-ai_interview{--stage-ink:#7855a8;--stage-wash:#f0ebf9}
-.stage-row-interview,.stage-row-interview_1{--stage-ink:#5369ad;--stage-wash:#ecf0fb}
-.stage-row-interview_2{--stage-ink:#8051a0;--stage-wash:#f3ecf9}
-.stage-row-interview_3{--stage-ink:#a24c78;--stage-wash:#f9edf4}
-.stage-row-offer{--stage-ink:#a46b14;--stage-wash:#fff4d9}
-.stage-row-rejected{--stage-ink:#818992;--stage-wash:#f1f3f5}
-.stage-section-row th{position:static!important;z-index:auto!important;background:var(--stage-wash)!important;border-left:5px solid var(--stage-ink);border-top:1px solid var(--line);border-bottom:1px solid var(--line);box-shadow:none!important;padding:10px 15px!important;color:var(--stage-ink)!important;font-size:12px!important;white-space:nowrap}
-.stage-section-row:first-child th{border-top:0}
-.section-step{font-family:Consolas,monospace;font-size:12px;font-weight:800;letter-spacing:.03em;margin-right:12px;opacity:.8}
-.section-name{font-size:13px;font-weight:800;color:var(--ink)}
-.section-count{font-size:11px;margin-left:12px;color:var(--stage-ink);font-weight:700}
-.applications-table .stage-row td:first-child{background:var(--stage-wash);border-left:4px solid var(--stage-ink);padding-left:12px}
-.applications-table .stage-row:hover,.applications-table .stage-row:hover td:first-child{background:color-mix(in srgb,var(--stage-wash) 74%,white)}
-.applications-table .stage-row.review-row{background:#fffcf6}
-.applications-table .stage-row.review-row td:first-child{background:var(--stage-wash)}
-.applications-table .stage-row.review-row:hover,.applications-table .stage-row.review-row:hover td:first-child{background:color-mix(in srgb,var(--stage-wash) 67%,#fff9ef)}
-.applications-table .stage-row .stage-badge{display:inline-flex;align-items:center;border-radius:7px;background:var(--stage-wash);color:var(--stage-ink);padding:6px 9px;font-size:11px;line-height:1.2;font-weight:800}
-.stage-index{font-family:Consolas,monospace;font-size:10px;font-weight:800;border-right:1px solid currentColor;padding-right:7px;margin-right:7px;opacity:.76}
-.applications-table .stage-row .status-cell{font-weight:700;color:var(--stage-ink)}
-.applications-table .stage-row.review-row .status-cell{color:#9b6c33}
-.applications-table .stage-row .status-cell{min-width:105px}
-.applications-table .stage-row .stage-badge{white-space:nowrap}
+/* A quiet table with stage colors concentrated in the labels. */
+.stage-row-applied{--stage-ink:#526d80;--stage-wash:#edf2f5}
+.stage-row-screening{--stage-ink:#386f97;--stage-wash:#e8f1f8}
+.stage-row-assessment{--stage-ink:#167d83;--stage-wash:#e5f3f2}
+.stage-row-written_test{--stage-ink:#19718c;--stage-wash:#e7f2f6}
+.stage-row-ai_interview{--stage-ink:#78549f;--stage-wash:#f2edf8}
+.stage-row-interview,.stage-row-interview_1{--stage-ink:#5e5da7;--stage-wash:#efeff9}
+.stage-row-interview_2{--stage-ink:#884b97;--stage-wash:#f5edf7}
+.stage-row-interview_3{--stage-ink:#a14d78;--stage-wash:#faedf3}
+.stage-row-offer{--stage-ink:#a36c22;--stage-wash:#fff4e1}
+.stage-row-rejected{--stage-ink:#737d87;--stage-wash:#f0f2f4}
+.applications-table{min-width:1100px}
+.applications-table th{background:#f9fbfb;color:#6f8589;border-bottom:1px solid #dce5e5;font-size:12px}
+.applications-table td{padding-top:17px;padding-bottom:17px;background:#fff;font-size:13px}
+.applications-table th:first-child{background:#f9fbfb}
+.applications-table .stage-row td:first-child{background:#fff}
+.applications-table .stage-row:hover td,.applications-table .stage-row:hover td:first-child{background:#f8fafb}
+.applications-table .stage-start td{border-top:2px solid #dce5e8}
+.applications-table .stage-start td:first-child{border-top-color:var(--stage-ink)}
+.applications-table .stage-row .stage-badge{display:inline-flex;align-items:center;gap:7px;width:max-content;max-width:100%;border-radius:6px;background:var(--stage-wash);color:var(--stage-ink);padding:7px 10px;font-size:12px;line-height:1.2;font-weight:750;white-space:nowrap}
+.applications-table .stage-row .stage-badge:before{content:"";width:6px;height:6px;flex:none;border-radius:50%;background:var(--stage-ink)}
+.applications-table .stage-row .status-cell{min-width:105px;color:var(--ink-soft);font-weight:650}
+.applications-table .stage-row.review-row .status-cell,.applications-table .stage-row.cluster-row .status-cell{color:#946835}
+.applications-table .cluster-row td,.applications-table .cluster-row td:first-child{background:#fbfcfc}
+.applications-table .cluster-row:hover td,.applications-table .cluster-row:hover td:first-child{background:#f4f8f8}
+.applications-table .cluster-row .position-cell{font-weight:700}
+.applications-table .cluster-detail td,.applications-table .cluster-detail td:first-child{background:#fff}
+.applications-table .cluster-detail .company-cell{padding-left:26px;color:var(--muted)}
+.applications-table .cluster-detail .company-cell strong{font-weight:650}
+.applications-table tr[hidden]{display:none!important}

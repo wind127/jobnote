@@ -10,7 +10,7 @@ await cp(join(root, 'public'), join(root, 'dist', 'public'), { recursive: true }
 // can serve a fresh build without needing a new static route.
 const sorting = await readFile(join(root, 'public', 'sorting.js'), 'utf8');
 const app = await readFile(join(root, 'public', 'app.js'), 'utf8');
-const importLine = "import {STAGE_PROGRESS,compareProgressRows} from './sorting.js';";
+const importLine = "import {groupProgressRows} from './sorting.js';";
 if (!app.startsWith(importLine)) throw new Error('Unexpected browser entry point');
 await writeFile(
   join(root, 'dist', 'public', 'app.js'),

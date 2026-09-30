@@ -1,4 +1,4 @@
-import {STAGE_PROGRESS,compareProgressRows} from './sorting.js';
+import {groupProgressRows} from './sorting.js';
 
 const STAGE={applied:'投递',screening:'简历筛选',assessment:'测评',written_test:'笔试',ai_interview:'AI 面试',interview_1:'一面',interview_2:'二面',interview_3:'三面',offer:'Offer',rejected:'流程结束'};
 const LEGACY_STAGE={interview:'轮次待核对',other:'阶段待核对'};
@@ -53,13 +53,54 @@ function renderTodoTable(container,items,completed=false){
 }
 function renderTodos(){const list=$('todo-list'),completedList=$('completed-list');list.replaceChildren();completedList.replaceChildren();const pending=state.reviews.flatMap(review=>{const todo=reviewTodo(review);return todo?[{...todo,review,company:review.company,position:review.position,status:'open'}]:[];});const open=[...state.todos.filter(todo=>todo.status==='open'),...pending].sort(sortTodos),done=state.todos.filter(todo=>todo.status==='done');$('todo-count').textContent=open.length;$('urgent-count').textContent=open.filter(todo=>['overdue','soon'].includes(todoTier(todo).className)).length;renderTodoTable(list,open);renderTodoTable(completedList,done,true);$('completed-panel').hidden=!done.length;$('completed-heading').textContent=`已完成 ${done.length} 项`;}
 function renderFailures(){const panel=$('failure-panel'),list=$('failure-list');panel.hidden=!state.failures.length;list.replaceChildren();$('failure-panel-count').textContent=state.failures.length;for(const failure of state.failures){const row=el('div','mini-row');appendText(row,'strong','',failure.subject||`邮件 UID ${failure.uid}`);appendText(row,'p','',failure.error);appendText(row,'span','failure-state',failure.status==='skipped'?'已跳过，留待重试':failure.status==='retry_requested'?'等待下次任务重试':'等待处理');const controls=el('div','mini-actions');if(failure.status!=='retry_requested'){const retry=el('button','text-action','下轮重试');retry.onclick=()=>action(`/api/failures/${encodeURIComponent(failure.source_key)}/retry`,{},'已安排下轮重试');controls.append(retry);}if(failure.status!=='skipped'){const skip=el('button','quiet-action','跳过并继续');skip.onclick=()=>openSkip(failure);controls.append(skip);}row.append(controls);list.append(row);}}
+function stageBadge(phase){const badge=el('span','stage-badge',stageLabel(phase));return badge;}
+function applicationRow(item,extraClass='',detailIndex=-1){
+  const entry=item.record,phase=entry.stage;
+  const row=el('tr',`stage-row stage-row-${phase}${item.review?' review-row':''}${extraClass?` ${extraClass}`:''}`);
+  const company=el('td','company-cell');appendText(company,'strong','',detailIndex>=0?`通知 ${detailIndex+1}`:entry.company||'公司待核对');
+  if(item.review)appendText(company,'span','review-flag',entry.mail_count>1?`${entry.mail_count} 封邮件`:'待核对');
+  row.append(company);
+  const position=el('td','position-cell');appendText(position,'strong','',entry.position||'岗位待核对');row.append(position);
+  const stageCell=el('td');stageCell.append(stageBadge(phase));row.append(stageCell);
+  appendText(row,'td','status-cell',statusLabel(phase,entry.status));
+  const next=item.review?reviewTodo(entry):state.todos.find(todo=>todo.application_id===entry.id&&todo.status==='open');
+  appendText(row,'td',next?'next-cell':'muted-cell',next?.title||'—');
+  appendText(row,'td','date-cell',next?.due_at?shortDate(next.due_at):next?.due_date?`${next.due_date}（仅日期）`:next?.time_text||'—');
+  appendText(row,'td','date-cell',shortDate(entry.last_event_at||entry.occurred_at||entry.created_at));
+  const actionCell=el('td');
+  if(item.review)actionCell.append(reviewActions(entry));
+  else{const controls=el('div','table-actions');const view=el('button','outline-button','查看进展');view.type='button';view.onclick=()=>openDetail(entry);const edit=el('button','icon-button','编辑');edit.type='button';edit.onclick=()=>openEdit(entry);controls.append(view,edit);actionCell.append(controls);}
+  row.append(actionCell);return row;
+}
+function reviewClusterRows(item,firstInStage){
+  const reviews=item.cluster,entry=item.record,phase=entry.stage;
+  const row=el('tr',`stage-row stage-row-${phase} cluster-row${firstInStage?' stage-start':''}`);
+  const company=el('td','company-cell');appendText(company,'strong','',entry.company||'公司待核对');
+  const mailCount=reviews.reduce((sum,review)=>sum+(Number(review.mail_count)||1),0);
+  appendText(company,'span','review-flag',`${reviews.length} 项待核对 · ${mailCount} 封邮件`);row.append(company);
+  const roles=[...new Set(reviews.map(review=>review.position).filter(Boolean))];
+  const hasUnknownRole=reviews.some(review=>!review.position);
+  appendText(row,'td','position-cell',roles.length===1&&!hasUnknownRole?roles[0]:roles.length>1?`${roles.length} 个岗位待核对`:hasUnknownRole&&roles.length?'部分岗位待核对':'岗位待核对');
+  const stageCell=el('td');stageCell.append(stageBadge(phase));row.append(stageCell);
+  appendText(row,'td','status-cell','待核对');
+  const tasks=reviews.map(reviewTodo).filter(Boolean),titles=[...new Set(tasks.map(todo=>todo.title).filter(Boolean))];
+  appendText(row,'td','next-cell',titles.length===1?titles[0]:titles.length>1?`${titles.length} 项不同安排，展开查看`:'展开查看邮件进展');
+  const deadlines=[...new Set(tasks.map(todo=>todo.due_at?shortDate(todo.due_at):todo.due_date?`${todo.due_date}（仅日期）`:todo.time_text).filter(Boolean))];
+  appendText(row,'td','date-cell',deadlines.length===1?deadlines[0]:deadlines.length>1?'多个时间':'—');
+  appendText(row,'td','date-cell',shortDate(entry.occurred_at||entry.created_at));
+  const actionCell=el('td'),toggle=el('button','outline-button','展开核对');toggle.type='button';toggle.setAttribute('aria-expanded','false');
+  const details=reviews.map((review,index)=>{const detail=applicationRow({record:review,review:true},'cluster-detail',index);detail.hidden=true;return detail;});
+  toggle.onclick=()=>{const open=toggle.getAttribute('aria-expanded')!=='true';toggle.setAttribute('aria-expanded',String(open));toggle.textContent=open?'收起明细':'展开核对';details.forEach(detail=>{detail.hidden=!open;});};
+  actionCell.append(toggle);row.append(actionCell);
+  return [row,...details];
+}
 function renderApplications(){
   const list=$('application-list');
   list.replaceChildren();
   const query=$('search').value.trim().toLocaleLowerCase(),stage=$('stage-filter').value;
   const apps=state.applications.filter(app=>(!query||`${app.company} ${app.position}`.toLocaleLowerCase().includes(query))&&stage!=='needs_review'&&(!stage||app.stage===stage));
   const reviews=state.reviews.filter(review=>(!query||`${review.company||''} ${review.position||''}`.toLocaleLowerCase().includes(query))&&(!stage||stage==='needs_review'||review.stage===stage));
-  const rows=[...apps.map(record=>({record,review:false})),...reviews.map(record=>({record,review:true}))].sort(compareProgressRows);
+  const rows=groupProgressRows(apps,reviews);
   if(!rows.length){
     list.append(emptyBox(state.applications.length||state.reviews.length?'没有匹配的记录':'暂无岗位记录',state.applications.length||state.reviews.length?'试试其他关键词或阶段。':'运行读信整理任务后，岗位会显示在这里。'));
     return;
@@ -71,33 +112,12 @@ function renderApplications(){
     const heading=el('th','',name);heading.scope='col';headRow.append(heading);
   }
   head.append(headRow);table.append(head);
-  const body=el('tbody');
-  const counts=new Map();for(const item of rows)counts.set(item.record.stage,(counts.get(item.record.stage)||0)+1);
-  let currentStage;
+  const body=el('tbody');let currentStage;
   for(const item of rows){
-    const entry=item.record,phase=entry.stage;
-    if(phase!==currentStage){
-      currentStage=phase;
-      const separator=el('tr',`stage-section-row stage-row-${phase}`),heading=el('th');heading.colSpan=8;heading.scope='rowgroup';
-      const number=STAGE_PROGRESS[phase],step=Number.isInteger(number)&&number>0?String(number).padStart(2,'0'):phase==='rejected'?'终':'?';
-      appendText(heading,'span','section-step',step);appendText(heading,'span','section-name',stageLabel(phase));appendText(heading,'span','section-count',`${counts.get(phase)} 条`);
-      separator.append(heading);body.append(separator);
-    }
-    const row=el('tr',`stage-row stage-row-${phase}${item.review?' review-row':''}`);
-    const company=el('td','company-cell');appendText(company,'strong','',entry.company||'公司待核对');
-    if(item.review)appendText(company,'span','review-flag',entry.mail_count>1?`待核对 · ${entry.mail_count} 封通知`:'待核对');
-    row.append(company);
-    const position=el('td','position-cell');appendText(position,'strong','',entry.position||'岗位待核对');row.append(position);
-    const stageCell=el('td'),badge=el('span','stage-badge');appendText(badge,'span','stage-index',Number.isInteger(STAGE_PROGRESS[phase])&&STAGE_PROGRESS[phase]>0?String(STAGE_PROGRESS[phase]).padStart(2,'0'):phase==='rejected'?'终':'?');appendText(badge,'span','',stageLabel(phase));stageCell.append(badge);row.append(stageCell);
-    appendText(row,'td','status-cell',item.review?`待核对 · ${statusLabel(phase,entry.status)}`:statusLabel(phase,entry.status));
-    const next=item.review?reviewTodo(entry):state.todos.find(todo=>todo.application_id===entry.id&&todo.status==='open');
-    appendText(row,'td',next?'next-cell':'muted-cell',next?.title||'—');
-    appendText(row,'td','date-cell',next?.due_at?shortDate(next.due_at):next?.due_date?`${next.due_date}（仅日期）`:next?.time_text||'—');
-    appendText(row,'td','date-cell',shortDate(entry.last_event_at||entry.occurred_at||entry.created_at));
-    const actionCell=el('td');
-    if(item.review)actionCell.append(reviewActions(entry));
-    else{const controls=el('div','table-actions');const view=el('button','outline-button','查看进展');view.type='button';view.onclick=()=>openDetail(entry);const edit=el('button','icon-button','编辑');edit.type='button';edit.onclick=()=>openEdit(entry);controls.append(view,edit);actionCell.append(controls);}
-    row.append(actionCell);body.append(row);
+    const phase=item.record.stage,firstInStage=phase!==currentStage;
+    currentStage=phase;
+    if(item.cluster)body.append(...reviewClusterRows(item,firstInStage));
+    else body.append(applicationRow(item,firstInStage?'stage-start':''));
   }
   table.append(body);scroll.append(table);list.append(scroll);
 }

@@ -16,13 +16,15 @@ function reviewIdentity(row: Row): string | null {
   const company=clean(row.company,150), position=clean(row.position,150);
   if (!company) return null;
   if (position) return JSON.stringify(['role',keyOf(company),keyOf(position),String(row.stage),keyOf(clean(row.application_ref,100)),keyOf(clean(row.round,80))]);
-  // Without a role, only near-identical actionable notices may be collapsed.
+  // Without a role, the same dated action is one unresolved step even when a
+  // reminder uses different subject or evidence wording.
   if (!['assessment','written_test','ai_interview','interview','interview_1','interview_2','interview_3'].includes(String(row.stage))) return null;
+  let due='',title='';
+  try { const todo=JSON.parse(String(row.todo_json??'null')); due=clean(todo?.due_at,40)||clean(todo?.due_date,10); title=keyOf(clean(todo?.title,250)); } catch { /* Keep the source separate if the stored task is malformed. */ return null; }
+  if (title&&due) return JSON.stringify(['task',keyOf(company),String(row.stage),keyOf(clean(row.application_ref,100)),keyOf(clean(row.round,80)),title,keyOf(due)]);
   const evidence=keyOf(clean(row.evidence,600));
   if (evidence.length<6) return null;
-  let due='';
-  try { const todo=JSON.parse(String(row.todo_json??'null')); due=clean(todo?.due_at,40)||clean(todo?.due_date,10); } catch { /* Keep the source separate if the stored task is malformed. */ return null; }
-  return JSON.stringify(['notice',keyOf(company),String(row.stage),String(row.status),keyOf(clean(row.application_ref,100)),keyOf(clean(row.subject,250)),keyOf(clean(row.sender,250)),evidence,due]);
+  return JSON.stringify(['notice',keyOf(company),String(row.stage),String(row.status),keyOf(clean(row.application_ref,100)),keyOf(clean(row.round,80)),keyOf(clean(row.subject,250)),keyOf(clean(row.sender,250)),evidence,due]);
 }
 
 function groupReviews(rows: Row[]): Row[][] {
