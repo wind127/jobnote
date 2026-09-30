@@ -1,5 +1,15 @@
-const STAGE={applied:'投递',screening:'简历筛选',assessment:'测评',written_test:'笔试',ai_interview:'AI 面试',interview_1:'一面',interview_2:'二面',interview_3:'三面',interview:'面试',offer:'Offer',rejected:'流程结束',other:'其他'};
+const STAGE={applied:'投递',screening:'简历筛选',assessment:'测评',written_test:'笔试',ai_interview:'AI 面试',interview_1:'一面',interview_2:'二面',interview_3:'三面',offer:'Offer',rejected:'流程结束'};
+const LEGACY_STAGE={interview:'轮次待核对',other:'阶段待核对'};
 const STATUS={invited:'已邀请',scheduling:'待预约',scheduled:'已预约',completed:'已完成',passed:'已通过',failed:'未通过',cancelled:'已取消',received:'已收到',unknown:'待确认'};
+function stageLabel(stage){return STAGE[stage]||LEGACY_STAGE[stage]||'阶段待核对';}
+function statusLabel(stage,status,detailed=false){
+  if(stage==='interview')return !detailed&&['invited','scheduling','scheduled'].includes(status)?'待确认轮次':STATUS[status]||status;
+  if(stage==='other')return STATUS[status]||status;
+  if(STAGE[stage]&&['invited','scheduling','scheduled'].includes(status))return `待${STAGE[stage].replace('AI 面试','AI面试')}${detailed?`（${STATUS[status]}）`:''}`;
+  if(stage==='applied'&&status==='received')return '已投递';
+  if(stage==='offer'&&status==='received')return '已收到 Offer';
+  return STATUS[status]||status;
+}
 const $=id=>document.getElementById(id);
 let state={applications:[],todos:[],events:[],reviews:[],failures:[],version:-1};
 let toastTimer;
@@ -65,8 +75,8 @@ function renderApplications(){
     const row=el('tr');
     const company=el('td','company-cell');appendText(company,'strong','',app.company);row.append(company);
     const position=el('td','position-cell');appendText(position,'strong','',app.position);row.append(position);
-    const phase=el('td');appendText(phase,'span',`stage-badge stage-${app.stage}`,STAGE[app.stage]||app.stage);row.append(phase);
-    appendText(row,'td','status-cell',STATUS[app.status]||app.status);
+    const phase=el('td');appendText(phase,'span',`stage-badge stage-${app.stage}`,stageLabel(app.stage));row.append(phase);
+    appendText(row,'td','status-cell',statusLabel(app.stage,app.status));
     const next=state.todos.find(todo=>todo.application_id===app.id&&todo.status==='open');
     appendText(row,'td',next?'next-cell':'muted-cell',next?.title||'—');
     appendText(row,'td','date-cell',next?.due_at?shortDate(next.due_at):next?.due_date?`${next.due_date}（仅日期）`:next?.time_text||'—');
@@ -80,8 +90,8 @@ function renderApplications(){
     const row=el('tr','review-row'),todo=reviewTodo(review);
     const company=el('td','company-cell');appendText(company,'strong','',review.company||'公司待核对');appendText(company,'span','review-flag','待核对');row.append(company);
     const position=el('td','position-cell');appendText(position,'strong','',review.position||'岗位待核对');row.append(position);
-    const phase=el('td');appendText(phase,'span',`stage-badge stage-${review.stage}`,STAGE[review.stage]||review.stage);row.append(phase);
-    appendText(row,'td','status-cell',`待核对 · ${STATUS[review.status]||review.status}`);
+    const phase=el('td');appendText(phase,'span',`stage-badge stage-${review.stage}`,stageLabel(review.stage));row.append(phase);
+    appendText(row,'td','status-cell',`待核对 · ${statusLabel(review.stage,review.status)}`);
     appendText(row,'td',todo?'next-cell':'muted-cell',todo?.title||'—');
     appendText(row,'td','date-cell',todo?.due_at?shortDate(todo.due_at):todo?.due_date?`${todo.due_date}（仅日期）`:todo?.time_text||'—');
     const event=state.events.find(item=>item.source_key===review.source_key&&item.ordinal===review.ordinal);
@@ -91,13 +101,17 @@ function renderApplications(){
   table.append(body);scroll.append(table);list.append(scroll);
 }
 function render(){$('workspace-label').textContent=state.demo_mode?'演示数据 · 本机工作区':'真实邮箱 · 本机工作区';const companies=new Set(state.applications.map(app=>app.company));$('company-count').textContent=companies.size;$('position-count').textContent=state.applications.length;$('review-count').textContent=state.reviews.length;const last=state.last_success_at;const stale=!last||Date.now()-Date.parse(last)>4*3600_000;$('sync-led').classList.toggle('error',stale);$('sync-status').textContent=state.scan_incomplete?`首轮整理未完成 · 仍有历史邮件待处理`:last?`${stale?'邮件进度可能未更新 · ':''}上次成功读取 ${shortDate(last)}`:'尚未读取邮箱，请运行读信任务';$('update-time').textContent=state.scan_incomplete?'首轮未完成':last?`最近更新 ${shortDate(last)}`:'等待首次读取';const delivery=state.delivery;$('delivery-status').textContent=!delivery?'微信摘要尚未发送':`微信摘要：${({accepted:'平台已接受',failed:'发送失败',unknown:'结果待确认',sending:'发送中'})[delivery.status]||delivery.status}`;renderTodos();renderFailures();renderApplications();}
-function openDetail(app){const container=$('detail-content');container.replaceChildren();appendText(container,'p','eyebrow','岗位时间线');appendText(container,'h2','',app.position);appendText(container,'p','detail-company',app.company);const events=state.events.filter(item=>item.application_id===app.id);if(!events.length)container.append(emptyBox('尚无时间线','新邮件整理后会显示在这里。'));for(const event of events){const item=el('article','timeline-item');appendText(item,'span','timeline-date',shortDate(event.occurred_at));const round=event.round&&!/^interview_[123]$/.test(event.stage)?` · ${event.round}`:'';appendText(item,'h3','',`${STAGE[event.stage]||event.stage} · ${STATUS[event.status]||event.status}${round}`);appendText(item,'p','timeline-evidence',event.evidence);appendText(item,'small','',`来自：${event.subject||'无主题'} · ${event.sender||'未知发件人'}`);container.append(item);}$('detail-dialog').showModal();}
-function fillOptions(id,values,selected){const select=$(id);select.replaceChildren();for(const [value,label] of Object.entries(values))select.add(new Option(label,value));select.value=selected;}
-function openReview(review){$('review-id').value=review.id;$('review-company').value=review.company||'';$('review-position').value=review.position||'';$('review-context').textContent=review.reason;$('review-evidence').textContent=review.evidence||'邮件没有可显示的证据片段';fillOptions('review-stage',STAGE,review.stage);fillOptions('review-status',STATUS,review.status);const select=$('review-application');select.replaceChildren(new Option('自动匹配或新建',''));for(const app of state.applications)select.add(new Option(`${app.company} · ${app.position}`,app.id));$('review-dialog').showModal();}
-function openEdit(app){$('edit-id').value=app.id;$('edit-version').value=app.version;$('edit-company').value=app.company;$('edit-position').value=app.position;fillOptions('edit-stage',STAGE,app.stage);fillOptions('edit-status',STATUS,app.status);$('edit-dialog').showModal();}
+function openDetail(app){const container=$('detail-content');container.replaceChildren();appendText(container,'p','eyebrow','岗位时间线');appendText(container,'h2','',app.position);appendText(container,'p','detail-company',app.company);const events=state.events.filter(item=>item.application_id===app.id);if(!events.length)container.append(emptyBox('尚无时间线','新邮件整理后会显示在这里。'));for(const event of events){const item=el('article','timeline-item');appendText(item,'span','timeline-date',shortDate(event.occurred_at));const round=event.round&&!/^interview_[123]$/.test(event.stage)?` · ${event.round}`:'';appendText(item,'h3','',`${stageLabel(event.stage)} · ${statusLabel(event.stage,event.status)}${round}`);appendText(item,'p','timeline-evidence',event.evidence);appendText(item,'small','',`来自：${event.subject||'无主题'} · ${event.sender||'未知发件人'}`);container.append(item);}$('detail-dialog').showModal();}
+function fillStageOptions(id,selected){const select=$(id);select.replaceChildren();if(!STAGE[selected])select.add(new Option('请选择具体阶段',''));for(const [value,label] of Object.entries(STAGE))select.add(new Option(label,value));select.value=STAGE[selected]?selected:'';}
+function fillStatusOptions(id,stage,selected){const select=$(id);select.replaceChildren();for(const value of Object.keys(STATUS))select.add(new Option(statusLabel(stage,value,true),value));select.value=selected;}
+function openReview(review){$('review-id').value=review.id;$('review-company').value=review.company||'';$('review-position').value=review.position||'';$('review-context').textContent=review.reason;$('review-evidence').textContent=review.evidence||'邮件没有可显示的证据片段';fillStageOptions('review-stage',review.stage);fillStatusOptions('review-status',review.stage,review.status);const select=$('review-application');select.replaceChildren(new Option('自动匹配或新建',''));for(const app of state.applications)select.add(new Option(`${app.company} · ${app.position}`,app.id));$('review-dialog').showModal();}
+function openEdit(app){$('edit-id').value=app.id;$('edit-version').value=app.version;$('edit-company').value=app.company;$('edit-position').value=app.position;fillStageOptions('edit-stage',app.stage);fillStatusOptions('edit-status',app.stage,app.status);$('edit-dialog').showModal();}
 function openSkip(failure){$('skip-key').value=failure.source_key;$('skip-reason').value='';$('skip-dialog').showModal();}
 function bind(){ $('header-date').textContent=new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'long',day:'numeric',weekday:'long'}).format(new Date());$('search').addEventListener('input',renderApplications);$('stage-filter').addEventListener('change',renderApplications);for(const button of document.querySelectorAll('[data-close]'))button.addEventListener('click',()=>$(button.dataset.close).close());$('review-form').addEventListener('submit',async event=>{event.preventDefault();if(await action(`/api/reviews/${encodeURIComponent($('review-id').value)}/resolve`,{company:$('review-company').value,position:$('review-position').value,stage:$('review-stage').value,status:$('review-status').value,application_id:$('review-application').value},'进展已确认'))$('review-dialog').close();});$('edit-form').addEventListener('submit',async event=>{event.preventDefault();if(await action(`/api/applications/${encodeURIComponent($('edit-id').value)}/edit`,{company:$('edit-company').value,position:$('edit-position').value,stage:$('edit-stage').value,status:$('edit-status').value,expected_version:Number($('edit-version').value)},'岗位信息已更新'))$('edit-dialog').close();});$('skip-form').addEventListener('submit',async event=>{event.preventDefault();if(await action(`/api/failures/${encodeURIComponent($('skip-key').value)}/skip`,{reason:$('skip-reason').value},'已记录跳过决定'))$('skip-dialog').close();});}
 bind();
+for(const prefix of ['review','edit'])$(prefix+'-stage').addEventListener('change',event=>{
+  const status=$(prefix+'-status');fillStatusOptions(prefix+'-status',event.target.value,status.value);
+});
 $('review-application').addEventListener('change',event=>{
   const app=state.applications.find(item=>item.id===event.target.value);
   if(app){$('review-company').value=app.company;$('review-position').value=app.position;}

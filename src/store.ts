@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { randomUUID, createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { AppError, type MailPage, type Submission, STAGES, STATUSES, CLASSIFICATIONS, type UpdateInput } from './types.js';
+import { AppError, type MailPage, type Submission, STAGES, SELECTABLE_STAGES, STATUSES, CLASSIFICATIONS, type UpdateInput } from './types.js';
 
 type Row = Record<string, unknown>;
 const nowIso = () => new Date().toISOString();
@@ -160,6 +160,7 @@ export class Store {
 
   private validateUpdate(input: UpdateInput, body: string): void {
     if (!input || typeof input !== 'object' || !STAGES.includes(input.stage) || !STATUSES.includes(input.status)) throw new AppError('BAD_UPDATE','进展阶段或状态无效。');
+    if (input.stage === 'interview' && !input.needs_review) throw new AppError('REVIEW_REQUIRED','未注明面试轮次时，请将进展标为待核对。');
     if (!clean(input.evidence,600) || !body.includes(input.evidence)) throw new AppError('BAD_EVIDENCE','证据原文不在本封邮件正文中。');
     if (input.company && input.company.length > 150 || input.position && input.position.length > 150) throw new AppError('BAD_UPDATE','公司或岗位名称过长。');
     if (input.occurred_at && !iso(input.occurred_at)) throw new AppError('BAD_TIME','事件时间无效。');
@@ -202,7 +203,7 @@ export class Store {
         for (const [ordinal,update] of msg.updates.entries()) {
           const company=clean(update.company,150), position=clean(update.position,150), appRef=clean(update.application_ref,100) || null;
           let app: Row | undefined;
-          let needsReview=msg.classification==='uncertain' || !!update.needs_review || !company || !position;
+          let needsReview=msg.classification==='uncertain' || !!update.needs_review || update.stage==='interview' || !company || !position;
           if (company && position) {
             const candidates=asRows(this.db.prepare('SELECT * FROM applications WHERE lower(company)=? AND lower(position)=?').all(keyOf(company),keyOf(position)));
             app=appRef ? candidates.find(row=>row.application_ref === appRef) : candidates.length===1 ? candidates[0] : undefined;
@@ -258,7 +259,7 @@ export class Store {
     if(!current || Number(current.version)!==fields.expected_version)throw new AppError('VERSION_CONFLICT','岗位信息已变化，请刷新页面。');
     const company=clean(fields.company??current.company,150),position=clean(fields.position??current.position,150);
     const stage=fields.stage??String(current.stage),status=fields.status??String(current.status);
-    if(!company||!position||!STAGES.includes(stage as typeof STAGES[number])||!STATUSES.includes(status as typeof STATUSES[number]))throw new AppError('BAD_APPLICATION','公司、岗位、阶段或状态无效。');
+    if(!company||!position||!SELECTABLE_STAGES.includes(stage as typeof SELECTABLE_STAGES[number])||!STATUSES.includes(status as typeof STATUSES[number]))throw new AppError('BAD_APPLICATION','公司、岗位、阶段或状态无效。');
     this.db.prepare('UPDATE applications SET company=?,position=?,stage=?,status=?,manual_stage=1,version=version+1 WHERE id=?').run(company,position,stage,status,id);
     this.bumpVersion();
   }
@@ -270,7 +271,7 @@ export class Store {
       const name=clean(company,150),role=clean(position,150);
       if(!name||!role)throw new AppError('BAD_APPLICATION','请填写公司和岗位。');
       const phase=stage??String(review.stage),result=status??String(review.status);
-      if(!STAGES.includes(phase as typeof STAGES[number])||!STATUSES.includes(result as typeof STATUSES[number]))throw new AppError('BAD_APPLICATION','进展阶段或状态无效。');
+      if(!SELECTABLE_STAGES.includes(phase as typeof SELECTABLE_STAGES[number])||!STATUSES.includes(result as typeof STATUSES[number]))throw new AppError('BAD_APPLICATION','进展阶段或状态无效。');
       const event=this.db.prepare('SELECT * FROM events WHERE source_key=? AND ordinal=?').get(String(review.source_key),Number(review.ordinal)) as Row|undefined;
       if(!event)throw new AppError('EVENT_NOT_FOUND','对应邮件进展不存在。');
       let app:Row|undefined;

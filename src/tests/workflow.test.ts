@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../store.js';
 import { finishAndNotify, makeDigest } from '../notify.js';
-import { AppError, type MailPage, type Submission } from '../types.js';
+import { AppError, progressStatusLabel, type MailPage, type Submission } from '../types.js';
 
 process.env.EXMAIL_ACCOUNT='fixture@example.com';
 
@@ -135,8 +135,38 @@ test('reviewed interview rounds update the application and keep the task',()=>{
     assert.equal(after.todos.length,1);
     assert.match(String(after.todos[0].match_key),/interview_2/);
     assert.equal(after.events.find(event=>event.source_key===ctx.store.sourceKey(17,2))?.stage,'interview_2');
-    assert.match(makeDigest(ctx.store).body,/二面 · 已预约/);
+    assert.match(makeDigest(ctx.store).body,/二面 · 待二面/);
     ctx.store.editApplication(String(after.applications[0].id),{stage:'interview_3',expected_version:Number(after.applications[0].version)});
     assert.equal((ctx.store.dashboard() as {applications:Array<Record<string,unknown>>}).applications[0].stage,'interview_3');
+  }finally{ctx.close();}
+});
+
+test('pending labels follow the stage and unnumbered interviews require review',()=>{
+  assert.equal(progressStatusLabel('assessment','invited'),'待测评');
+  assert.equal(progressStatusLabel('written_test','scheduling'),'待笔试');
+  assert.equal(progressStatusLabel('ai_interview','scheduled'),'待AI面试');
+  assert.equal(progressStatusLabel('interview_1','invited'),'待一面');
+  assert.equal(progressStatusLabel('interview','scheduling'),'待确认轮次');
+  assert.equal(progressStatusLabel('interview','cancelled'),'已取消');
+  const ctx=fixture();
+  try{
+    const run=ctx.store.beginRun();
+    const mail=message(1,'示例科技邀请你参加面试，请确认时间。');
+    const batch=ctx.store.savePage(String(run.id),page([mail],1))!;
+    const input:Submission={schema_version:'1',run_id:String(run.id),batch_id:String(batch.id),messages:[{
+      source_key:ctx.store.sourceKey(17,1),classification:'recruitment',updates:[{company:'示例科技',position:'后端工程师',stage:'interview',status:'invited',evidence:'邀请你参加面试'}],
+    }]};
+    input.messages[0].updates[0].stage='other' as Submission['messages'][number]['updates'][number]['stage'];
+    assert.throws(()=>ctx.store.submit(input),(error:unknown)=>error instanceof AppError&&error.code==='BAD_UPDATE');
+    input.messages[0].updates[0].stage='interview';
+    assert.throws(()=>ctx.store.submit(input),(error:unknown)=>error instanceof AppError&&error.code==='REVIEW_REQUIRED');
+    input.messages[0].updates[0].needs_review=true;
+    ctx.store.submit(input);
+    const dashboard=ctx.store.dashboard() as {applications:unknown[];reviews:Array<Record<string,unknown>>};
+    assert.equal(dashboard.applications.length,0);
+    assert.equal(dashboard.reviews.length,1);
+    assert.throws(()=>ctx.store.resolveReview(String(dashboard.reviews[0].id),'示例科技','后端工程师',undefined,'interview','invited'),(error:unknown)=>error instanceof AppError&&error.code==='BAD_APPLICATION');
+    ctx.store.resolveReview(String(dashboard.reviews[0].id),'示例科技','后端工程师',undefined,'interview_1','invited');
+    assert.equal((ctx.store.dashboard() as {applications:Array<Record<string,unknown>>}).applications[0].stage,'interview_1');
   }finally{ctx.close();}
 });

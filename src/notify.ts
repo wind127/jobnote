@@ -1,5 +1,5 @@
 import { Store } from './store.js';
-import { AppError, STAGE_LABELS, STATUS_LABELS, type Stage, type StageStatus } from './types.js';
+import { AppError, STAGE_LABELS, progressStatusLabel, type Stage } from './types.js';
 
 type Row = Record<string, unknown>;
 const fourHours = 14_400_000;
@@ -42,7 +42,7 @@ export function makeDigest(store: Store, at = new Date()): {title:string;body:st
   }else lines.push('目前没有未完成待办。');
   if(recent.length){
     lines.push('',`新进展 ${recent.length} 项`);
-    for(const item of recent.slice(0,5))lines.push(`- ${item.company} · ${item.position}：${STAGE_LABELS[item.stage as Stage]??item.stage} · ${STATUS_LABELS[item.status as StageStatus]??item.status}`);
+    for(const item of recent.slice(0,5))lines.push(`- ${item.company} · ${item.position}：${STAGE_LABELS[item.stage as Stage]??'阶段待核对'} · ${progressStatusLabel(String(item.stage),String(item.status))}`);
     if(recent.length>5)lines.push(`另有 ${recent.length-5} 项新进展。`);
   }
   if(Number(failed.count)>0)lines.push('',`有 ${failed.count} 封邮件未完整处理，请在网页检查。`);
