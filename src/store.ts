@@ -135,6 +135,23 @@ export class Store {
     return { schema_version: '1', run_id: batch.run_id, batch_id: batch.id, page_end: batch.page_end, messages: messages.map(({source_key,subject,sender,received_at,body,error,failure_status}) => ({ source_key,subject,sender,received_at,body,error,failure_status })) };
   }
 
+  oversizedFailures(batchId: string): Row[] {
+    return asRows(this.db.prepare("SELECT source_key,uid FROM batch_messages WHERE batch_id=? AND error='邮件超过 2 MiB 读取上限'").all(batchId));
+  }
+
+  repairOpenBatchMessage(batchId: string, uidValidity: number, item: MailPage['items'][number]): void {
+    if(item.error || !item.text || !item.contentHash)throw new AppError('REPAIR_FAILED','该邮件仍无可用正文。');
+    this.transaction(()=>{
+      const batch=this.db.prepare("SELECT run_id,uid_validity FROM batches WHERE id=? AND status='open'").get(batchId) as Row|undefined;
+      if(!batch || Number(batch.uid_validity)!==uidValidity || this.activeRun().id!==batch.run_id)throw new AppError('BATCH_MISMATCH','待修复批次已失效。');
+      const sourceKey=this.sourceKey(uidValidity,item.uid);
+      const changed=this.db.prepare("UPDATE batch_messages SET message_id=?,subject=?,sender=?,received_at=?,body=?,content_hash=?,error=NULL WHERE batch_id=? AND source_key=? AND error='邮件超过 2 MiB 读取上限'").run(item.messageId,item.subject,item.sender,item.receivedAt,item.text,item.contentHash,batchId,sourceKey);
+      if(!changed.changes)throw new AppError('REPAIR_FAILED','待修复邮件已变化。');
+      this.db.prepare("UPDATE failures SET status='resolved',updated_at=? WHERE source_key=?").run(nowIso(),sourceKey);
+      this.bumpVersion();
+    });
+  }
+
   skipFailure(sourceKey: string, reason: string): void {
     if (!clean(reason,500)) throw new AppError('REASON_REQUIRED','请输入跳过原因。');
     const result = this.db.prepare("UPDATE failures SET status='skipped',skip_reason=?,updated_at=? WHERE source_key=? AND status IN ('pending','retry_requested')").run(clean(reason,500),nowIso(),sourceKey);
@@ -228,7 +245,7 @@ export class Store {
         }
       }
       if (!Number(batch.is_retry)) this.db.prepare('UPDATE scan_state SET last_uid=?,last_success_at=? WHERE id=1').run(Number(batch.page_end),nowIso());
-      else this.db.prepare("UPDATE failures SET status='resolved',updated_at=? WHERE source_key IN (SELECT source_key FROM batch_messages WHERE batch_id=?) AND status='retry_requested'").run(nowIso(),String(batch.id));
+      this.db.prepare("UPDATE failures SET status='resolved',updated_at=? WHERE source_key IN (SELECT source_key FROM batch_messages WHERE batch_id=? AND error IS NULL)").run(nowIso(),String(batch.id));
       this.db.prepare("UPDATE batches SET status='submitted' WHERE id=?").run(String(batch.id));
       this.db.prepare('UPDATE batch_messages SET body=NULL WHERE batch_id=?').run(String(batch.id));
       this.bumpVersion();

@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../store.js';
+import { chooseTextPart } from '../mail.js';
 import { finishRun, makeDigest } from '../notify.js';
 import { AppError, progressStatusLabel, type MailPage, type Submission } from '../types.js';
 
@@ -69,6 +70,30 @@ test('failed message blocks the page until the user skips it; later retry keeps 
     ctx.store.submit(submission(ctx.store,String(run.id),String(retry.id),[2]));
     assert.equal(ctx.store.scanState().last_uid,3);
     assert.equal((ctx.store.dashboard() as {failures:unknown[]}).failures.length,0);
+  }finally{ctx.close();}
+});
+
+test('a large MIME message selects its text body and an open failed batch can recover',()=>{
+  const structure=[
+    {type:'mixed'},
+    [{partID:'1',type:'text',subtype:'plain',size:120,encoding:'QUOTED-PRINTABLE',params:{charset:'UTF-8'}}],
+    [{partID:'2',type:'application',subtype:'pdf',size:4_000_000,disposition:{type:'attachment'}}],
+  ];
+  assert.equal(chooseTextPart(structure)?.partID,'1');
+  assert.equal(chooseTextPart([[{partID:'1',type:'text',subtype:'plain',size:120,disposition:{type:'attachment'}}]]),null);
+  assert.equal(chooseTextPart([[{partID:'1',type:'text',subtype:'plain',size:120,params:{name:'notes.txt'}}]]),null);
+  const ctx=fixture();
+  try{
+    const run=ctx.store.beginRun();
+    const bad={...message(1),text:null,contentHash:null,error:'邮件超过 2 MiB 读取上限'};
+    const batch=ctx.store.savePage(String(run.id),page([bad],1))!;
+    assert.equal(ctx.store.oversizedFailures(String(batch.id)).length,1);
+    assert.throws(()=>ctx.store.submit(submission(ctx.store,String(run.id),String(batch.id),[1])),(error:unknown)=>error instanceof AppError&&error.code==='MAIL_UNRESOLVED');
+    ctx.store.skipFailure(ctx.store.sourceKey(17,1),'旧读取上限导致暂时跳过');
+    ctx.store.repairOpenBatchMessage(String(batch.id),17,message(1));
+    assert.equal(ctx.store.oversizedFailures(String(batch.id)).length,0);
+    assert.equal((ctx.store.dashboard() as {failures:unknown[]}).failures.length,0);
+    assert.equal((ctx.store.submit(submission(ctx.store,String(run.id),String(batch.id),[1])) as {accepted:boolean}).accepted,true);
   }finally{ctx.close();}
 });
 

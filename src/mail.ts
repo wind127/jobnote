@@ -5,7 +5,38 @@ import { existsSync } from 'node:fs';
 import { AppError, type MailItem, type MailPage } from './types.js';
 
 const MAX_MESSAGE_BYTES = 2 * 1024 * 1024;
+const MAX_TEXT_CHARS = 500_000;
 type AnyRecord = Record<string, any>;
+
+interface TextPart { partID: string; subtype: 'plain' | 'html'; charset: string; encoding: string; size: number; }
+
+export function chooseTextPart(structure: unknown): TextPart | null {
+  const found: TextPart[] = [];
+  const visit = (node: unknown): void => {
+    if (!Array.isArray(node)) return;
+    for (const value of node) {
+      if (Array.isArray(value)) { visit(value); continue; }
+      if (!value || typeof value !== 'object') continue;
+      const part = value as AnyRecord;
+      const subtype = String(part.subtype ?? '').toLowerCase();
+      if (String(part.type ?? '').toLowerCase() !== 'text' || !['plain','html'].includes(subtype)) continue;
+      if (String(part.disposition?.type ?? '').toLowerCase() === 'attachment') continue;
+      if (part.params?.name || part.disposition?.params?.filename) continue;
+      if (!/^\d+(?:\.\d+)*$/.test(String(part.partID ?? ''))) continue;
+      const size = Number(part.size);
+      if (!Number.isFinite(size) || size < 0 || size > MAX_MESSAGE_BYTES) continue;
+      found.push({partID:String(part.partID),subtype:subtype as 'plain'|'html',charset:String(part.params?.charset ?? 'utf-8'),encoding:String(part.encoding ?? '7bit'),size});
+    }
+  };
+  visit(structure);
+  return found.find(part => part.subtype === 'plain') ?? found.find(part => part.subtype === 'html') ?? null;
+}
+
+function partMessage(part: TextPart, body: Buffer): Buffer {
+  const charset=part.charset.replace(/[^a-zA-Z0-9._-]/g,'').slice(0,40)||'utf-8';
+  const encoding=part.encoding.replace(/[^a-zA-Z0-9_-]/g,'').slice(0,40)||'7bit';
+  return Buffer.concat([Buffer.from(`Content-Type: text/${part.subtype}; charset=${charset}\r\nContent-Transfer-Encoding: ${encoding}\r\n\r\n`),body]);
+}
 
 function loadSkill(): { Imap: any; simpleParser: (input: Buffer) => Promise<AnyRecord> } {
   const directory = process.env.QQEXMAIL_SKILL_DIR;
@@ -32,26 +63,28 @@ function imapCall<T>(invoke: (callback: (error: Error | null, result: T) => void
   return new Promise((resolve, reject) => invoke((error, result) => error ? reject(error) : resolve(result)));
 }
 
-interface Fetched { uid: number; date: Date | null; size: number; raw: Buffer; }
+interface Fetched { uid: number; date: Date | null; size: number; raw: Buffer; structure: unknown; truncated: boolean; }
 
-function fetchMany(conn: any, uids: number[], bodies: string): Promise<Map<number, Fetched>> {
+function fetchMany(conn: any, uids: number[], bodies: string, struct = false): Promise<Map<number, Fetched>> {
   if (!uids.length) return Promise.resolve(new Map());
   return new Promise((resolve, reject) => {
     const result = new Map<number, Fetched>();
     const waiting: Promise<void>[] = [];
     let failed = false;
-    const fetcher = conn.fetch(uids, { bodies, size: true, markSeen: false });
+    const fetcher = conn.fetch(uids, { bodies, size: true, struct, markSeen: false });
     fetcher.on('message', (message: any) => {
       let attributes: AnyRecord | null = null;
       const parts: Buffer[] = [];
       const streams: Promise<void>[] = [];
+      let buffered=0;
+      let truncated=false;
       message.once('attributes', (attrs: AnyRecord) => { attributes = attrs; });
       message.on('body', (stream: any) => {
         streams.push(new Promise<void>((done, fail) => {
-          let total = 0;
           stream.on('data', (chunk: Buffer) => {
-            total += chunk.length;
-            if (total <= MAX_MESSAGE_BYTES + 1024) parts.push(chunk);
+            const remaining=MAX_MESSAGE_BYTES+1024-buffered;
+            if(chunk.length>remaining)truncated=true;
+            if(remaining>0){const saved=chunk.subarray(0,remaining);parts.push(saved);buffered+=saved.length;}
           });
           stream.once('end', done);
           stream.once('error', fail);
@@ -64,7 +97,7 @@ function fetchMany(conn: any, uids: number[], bodies: string): Promise<Map<numbe
             if (attrs?.uid && Number.isSafeInteger(Number(attrs.uid))) {
               result.set(Number(attrs.uid), {
                 uid: Number(attrs.uid), date: attrs.date instanceof Date ? attrs.date : null,
-                size: Number(attrs.size ?? 0), raw: Buffer.concat(parts),
+                size: Number(attrs.size ?? 0), raw: Buffer.concat(parts), structure:attrs.struct, truncated,
               });
             }
             done();
@@ -112,7 +145,7 @@ export async function readPage(lastUid: number, since: string, fixedUpper: numbe
     const found = await imapCall<number[]>(callback => conn.search(criteria, callback));
     const selected = found.filter(uid => uid > lastUid && uid <= upperUid).sort((a,b) => a-b).slice(0,limit);
     if (!selected.length) return { uidValidity, upperUid, pageEnd: upperUid, items: [] };
-    const headers = await fetchMany(conn, selected, 'HEADER.FIELDS (SUBJECT FROM DATE MESSAGE-ID)');
+    const headers = await fetchMany(conn, selected, 'HEADER.FIELDS (SUBJECT FROM DATE MESSAGE-ID)', true);
     const eligible = selected.filter(uid => (headers.get(uid)?.size ?? MAX_MESSAGE_BYTES + 1) <= MAX_MESSAGE_BYTES);
     const full = await fetchMany(conn, eligible, '');
     const items: MailItem[] = [];
@@ -120,19 +153,31 @@ export async function readPage(lastUid: number, since: string, fixedUpper: numbe
       const header = headers.get(uid);
       const item = full.get(uid);
       const base = { uid, messageId: null, subject: '', sender: '', receivedAt: (header?.date ?? new Date()).toISOString(), text: null, contentHash: null };
-      if (!header) { items.push({ ...base, error: '邮件在读取时消失或无法取得属性' }); continue; }
+      if (!header || header.truncated) { items.push({ ...base, error: '邮件在读取时消失或无法取得属性' }); continue; }
       try {
         const headerParsed = await simpleParser(header.raw);
         base.subject = String(headerParsed.subject ?? '').slice(0, 300);
         base.sender = String(headerParsed.from?.text ?? '').slice(0,300);
         base.messageId = headerParsed.messageId ?? null;
       } catch { /* Header fallback stays visible as a failed source. */ }
-      if (header.size > MAX_MESSAGE_BYTES) { items.push({ ...base, error: '邮件超过 2 MiB 读取上限' }); continue; }
-      if (!item) { items.push({ ...base, error: '邮件正文在读取时消失' }); continue; }
+      if (header.size > MAX_MESSAGE_BYTES) {
+        const part=chooseTextPart(header.structure);
+        if(!part){items.push({ ...base, error:'大邮件没有可读取的正文部分，附件未解析' });continue;}
+        const fetched=(await fetchMany(conn,[uid],part.partID)).get(uid);
+        if(!fetched || fetched.truncated){items.push({ ...base,error:'大邮件正文读取失败或超过 2 MiB' });continue;}
+        try{
+          const parsed=await simpleParser(partMessage(part,fetched.raw));
+          const text=String(parsed.text ?? stripHtml(parsed.html)).trim();
+          if(!text || text.length>MAX_TEXT_CHARS){items.push({ ...base,error:'大邮件正文为空或过长，附件未解析' });continue;}
+          items.push({...base,text,contentHash:createHash('sha256').update(header.raw).update(fetched.raw).digest('hex'),error:null});
+        }catch{items.push({ ...base,error:'大邮件正文解析失败' });}
+        continue;
+      }
+      if (!item || item.truncated) { items.push({ ...base, error: '邮件正文在读取时消失或超过读取上限' }); continue; }
       try {
         const parsed = await simpleParser(item.raw);
         const text = String(parsed.text ?? stripHtml(parsed.html)).trim();
-        if (!text) { items.push({ ...base, error: '邮件没有可读取的文本正文' }); continue; }
+        if (!text || text.length>MAX_TEXT_CHARS) { items.push({ ...base, error: '邮件没有可读取的文本正文或正文过长' }); continue; }
         items.push({ ...base,
           messageId: parsed.messageId ?? base.messageId,
           subject: String(parsed.subject ?? base.subject).slice(0,300),

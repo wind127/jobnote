@@ -34,7 +34,17 @@ async function main():Promise<void>{
       if(!Number.isSafeInteger(requestedLimit)||requestedLimit<1||requestedLimit>100)throw new AppError('BAD_LIMIT','单批邮件数量应为 1 到 100。');
       const run=store.activeRun();
       const open=store.activeBatch(String(run.id));
-      if(open)result=store.batchView(String(open.id));
+      if(open){
+        for(const failed of store.oversizedFailures(String(open.id))){
+          const scan=store.scanState();
+          const uid=Number(failed.uid);
+          const page=await readPage(uid-1,String(scan.first_since),uid,1);
+          if(page.uidValidity!==Number(open.uid_validity))throw new AppError('UIDVALIDITY_CHANGED','邮箱 UIDVALIDITY 已变化，无法修复原批次。');
+          const repaired=page.items.find(item=>item.uid===uid && !item.error);
+          if(repaired)store.repairOpenBatchMessage(String(open.id),page.uidValidity,repaired);
+        }
+        result=store.batchView(String(open.id));
+      }
       else{
         const retry=store.requestedRetry();
         const scan=store.scanState();
