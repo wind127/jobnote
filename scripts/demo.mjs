@@ -3,7 +3,8 @@ import { Store } from '../dist/store.js';
 import { startWeb } from '../dist/web.js';
 
 process.env.EXMAIL_ACCOUNT='demo@example.test';
-const dir=resolve('data/demo');
+const dir=resolve(process.env.JOBNOTE_DEMO_DATA_DIR ?? 'data/demo-v2');
+const port=Number(process.env.JOBNOTE_DEMO_PORT ?? 3211);
 const store=new Store(dir);
 store.setSetting('demo_mode','true');
 if(Number(store.scanState().last_uid)===0){
@@ -18,5 +19,5 @@ if(Number(store.scanState().last_uid)===0){
   const batch=store.savePage(String(run.id),{uidValidity:1,upperUid:3,pageEnd:3,items});
   store.submit({schema_version:'1',run_id:String(run.id),batch_id:String(batch.id),messages:samples.map(sample=>({source_key:store.sourceKey(1,sample.uid),classification:'recruitment',updates:[{company:sample.company,position:sample.position,application_ref:sample.ref,stage:sample.stage,status:sample.status,evidence:sample.text,todo:sample.todo}]}))});
 }
-console.log('示例数据与真实邮箱分开存放在 data/demo。');
-await startWeb(store,3211);
+console.log(`示例数据与真实邮箱分开存放在 ${dir}。`);
+await startWeb(store,port);
