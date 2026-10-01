@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { randomUUID, createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { AppError, type MailPage, type Submission, STAGES, SELECTABLE_STAGES, STATUSES, CLASSIFICATIONS, type UpdateInput } from './types.js';
+import { AppError, type MailPage, type Submission, STAGES, SELECTABLE_STAGES, STATUSES, CLASSIFICATIONS, STAGE_LABELS, progressStatusLabel, type UpdateInput } from './types.js';
 import { parseManualProgress, type ManualProgressRow } from './manual-import.js';
 
 type Row = Record<string, unknown>;
@@ -275,8 +275,8 @@ export class Store {
             reviews++;
           } else if (app) {
             applied++;
-            if (!Number(app.manual_stage) && this.shouldAdvanceApplication(app,update.stage,iso(update.occurred_at)??String(local.received_at))) {
-              this.db.prepare('UPDATE applications SET stage=?,status=?,last_event_at=?,version=version+1 WHERE id=?').run(update.stage,update.status,iso(update.occurred_at)??String(local.received_at),String(app.id));
+            if (this.shouldApplyAutomaticUpdate(app,update.stage,update.status,iso(update.occurred_at)??String(local.received_at))) {
+              this.db.prepare('UPDATE applications SET stage=?,status=?,last_event_at=?,manual_stage=0,version=version+1 WHERE id=?').run(update.stage,update.status,iso(update.occurred_at)??String(local.received_at),String(app.id));
             }
             if (update.todo) this.upsertTodo(String(app.id),eventId,update);
           }
@@ -311,6 +311,18 @@ export class Store {
     return !!stillAtImportTime&&STAGES.indexOf(phase as typeof STAGES[number])>STAGES.indexOf(String(app.stage) as typeof STAGES[number]);
   }
 
+  private shouldApplyAutomaticUpdate(app:Row,phase:string,status:string,occurredAt:string):boolean {
+    if(!Number(app.manual_stage))return this.shouldAdvanceApplication(app,phase,occurredAt);
+    if(Date.parse(occurredAt)<=Date.parse(String(app.last_event_at)))return false;
+    const current=STAGES.indexOf(String(app.stage) as typeof STAGES[number]);
+    const incoming=STAGES.indexOf(phase as typeof STAGES[number]);
+    if(current<0||incoming<0||String(app.stage)==='rejected')return false;
+    if(incoming>current)return true;
+    if(incoming!==current)return false;
+    const rank:Record<string,number>={unknown:0,received:1,invited:1,scheduling:1,scheduled:2,completed:3,passed:4,failed:4,cancelled:4};
+    return (rank[status]??0)>(rank[String(app.status)]??0);
+  }
+
   setTodo(id: string, status: 'open'|'done', expectedVersion: number): void {
     const result=this.db.prepare('UPDATE todos SET status=?,manual_status=1,version=version+1 WHERE id=? AND version=?').run(status,id,expectedVersion);
     if (!result.changes) throw new AppError('VERSION_CONFLICT','待办已变化，请刷新页面。');
@@ -323,8 +335,16 @@ export class Store {
     const company=clean(fields.company??current.company,150),position=clean(fields.position??current.position,150);
     const stage=fields.stage??String(current.stage),status=fields.status??String(current.status);
     if(!company||!position||!SELECTABLE_STAGES.includes(stage as typeof SELECTABLE_STAGES[number])||!STATUSES.includes(status as typeof STATUSES[number]))throw new AppError('BAD_APPLICATION','公司、岗位、阶段或状态无效。');
-    this.db.prepare('UPDATE applications SET company=?,position=?,stage=?,status=?,manual_stage=1,version=version+1 WHERE id=?').run(company,position,stage,status,id);
-    this.bumpVersion();
+    const progressChanged=stage!==String(current.stage)||status!==String(current.status);
+    const at=progressChanged?nowIso():String(current.last_event_at);
+    this.transaction(()=>{
+      this.db.prepare('UPDATE applications SET company=?,position=?,stage=?,status=?,last_event_at=?,manual_stage=?,version=version+1 WHERE id=?').run(company,position,stage,status,at,progressChanged?1:Number(current.manual_stage),id);
+      if(progressChanged){
+        const note=`网页编辑：${STAGE_LABELS[stage as keyof typeof STAGE_LABELS]??stage} · ${progressStatusLabel(stage,status)}`;
+        this.db.prepare('INSERT INTO manual_updates(id,fingerprint,application_id,stage,status,note,created_at) VALUES(?,?,?,?,?,?,?)').run(randomUUID(),`web-edit:${randomUUID()}`,id,stage,status,note,at);
+      }
+      this.bumpVersion();
+    });
   }
 
   previewManualProgress(text: string): object {
@@ -478,12 +498,12 @@ export class Store {
       this.db.prepare('UPDATE events SET application_id=?,stage=?,status=?,needs_review=0 WHERE id=?').run(String(app.id),phase,member.id===review.id?result:String(member.status),String(memberEvent.id));
       this.db.prepare("UPDATE review_items SET state='resolved',resolved_by=? WHERE id=?").run(resolvedBy,String(member.id));
     }
-    const isCurrent=this.shouldAdvanceApplication(app,phase,String(event.occurred_at));
-    if(!Number(app.manual_stage)&&isCurrent){
-      this.db.prepare('UPDATE applications SET stage=?,status=?,last_event_at=?,version=version+1 WHERE id=?').run(phase,result,String(event.occurred_at),String(app.id));
+    const isCurrent=this.shouldApplyAutomaticUpdate(app,phase,result,String(event.occurred_at));
+    if(isCurrent){
+      this.db.prepare('UPDATE applications SET stage=?,status=?,last_event_at=?,manual_stage=0,version=version+1 WHERE id=?').run(phase,result,String(event.occurred_at),String(app.id));
     }
     const lastTask=[...members].reverse().find(member=>member.todo_json);
-    if(lastTask&&isCurrent){
+    if(lastTask&&this.shouldAdvanceApplication(app,phase,String(event.occurred_at))){
       const taskEvent=this.db.prepare('SELECT * FROM events WHERE source_key=? AND ordinal=?').get(String(lastTask.source_key),Number(lastTask.ordinal)) as Row;
       this.upsertTodo(String(app.id),String(taskEvent.id),{stage:phase as UpdateInput['stage'],status:result as UpdateInput['status'],round:taskEvent.round as string|null,todo:JSON.parse(String(lastTask.todo_json)),evidence:String(taskEvent.evidence),company:String(app.company),position:String(app.position)});
     }

@@ -164,6 +164,34 @@ test('reviewed interview rounds update the application and keep the task',()=>{
   }finally{ctx.close();}
 });
 
+test('a page-edited stage keeps its history and later mail can advance it',()=>{
+  const ctx=fixture();
+  try{
+    const run=ctx.store.beginRun();
+    const first=ctx.store.savePage(String(run.id),page([message(1,'已收到申请')],1))!;
+    ctx.store.submit({schema_version:'1',run_id:String(run.id),batch_id:String(first.id),messages:[
+      {source_key:ctx.store.sourceKey(17,1),classification:'recruitment',updates:[{company:'示例科技',position:'后端工程师',stage:'applied',status:'received',evidence:'已收到申请'}]},
+    ]});
+    const original=(ctx.store.dashboard() as {applications:Array<Record<string,unknown>>}).applications[0];
+    ctx.store.editApplication(String(original.id),{stage:'assessment',status:'invited',expected_version:Number(original.version)});
+    const edited=ctx.store.dashboard() as {applications:Array<Record<string,unknown>>;manual_updates:Array<Record<string,unknown>>};
+    assert.equal(edited.applications[0].stage,'assessment');
+    assert.equal(edited.applications[0].status,'invited');
+    assert.equal(edited.manual_updates.length,1);
+    assert.match(String(edited.manual_updates[0].fingerprint),/^web-edit:/);
+    const future=new Date(Date.now()+60_000).toISOString();
+    const next=ctx.store.savePage(String(run.id),page([message(2,'旧筛选通知'),message(3,'新的笔试邀请')],3))!;
+    ctx.store.submit({schema_version:'1',run_id:String(run.id),batch_id:String(next.id),messages:[
+      {source_key:ctx.store.sourceKey(17,2),classification:'recruitment',updates:[{company:'示例科技',position:'后端工程师',stage:'screening',status:'passed',occurred_at:'2026-09-29T00:00:00Z',evidence:'旧筛选通知'}]},
+      {source_key:ctx.store.sourceKey(17,3),classification:'recruitment',updates:[{company:'示例科技',position:'后端工程师',stage:'written_test',status:'invited',occurred_at:future,evidence:'新的笔试邀请'}]},
+    ]});
+    const advanced=(ctx.store.dashboard() as {applications:Array<Record<string,unknown>>}).applications[0];
+    assert.equal(advanced.stage,'written_test');
+    assert.equal(advanced.status,'invited');
+    assert.equal(advanced.manual_stage,0);
+  }finally{ctx.close();}
+});
+
 test('the project reconciles a missing role against one known application and keeps the task',()=>{
   const ctx=fixture();
   try{
