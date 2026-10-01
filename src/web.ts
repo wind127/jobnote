@@ -13,7 +13,7 @@ function json(response: ServerResponse, status: number, body: unknown): void {
 function bodyJson(request: IncomingMessage): Promise<Record<string,unknown>> {
   return new Promise((resolve,reject) => {
     let size=0;const parts:Buffer[]=[];
-    request.on('data',(chunk:Buffer)=>{size+=chunk.length;if(size>16_384){reject(new AppError('BODY_TOO_LARGE','请求内容过大。'));request.destroy();}else parts.push(chunk);});
+    request.on('data',(chunk:Buffer)=>{size+=chunk.length;if(size>262_144){reject(new AppError('BODY_TOO_LARGE','请求内容过大。'));request.destroy();}else parts.push(chunk);});
     request.on('end',()=>{try{const value=JSON.parse(Buffer.concat(parts).toString('utf8'));if(!value||typeof value!=='object'||Array.isArray(value))throw Error();resolve(value);}catch{reject(new AppError('BAD_JSON','请求内容不是有效 JSON。'));}});
     request.on('error',reject);
   });
@@ -33,6 +33,8 @@ export function startWeb(store: Store, port=3210): Promise<void> {
         if(origin && origin!==`http://127.0.0.1:${port}`&&origin!==`http://localhost:${port}`)throw new AppError('BAD_ORIGIN','跨站请求已拒绝。');
         if(!String(request.headers['content-type']??'').startsWith('application/json'))throw new AppError('BAD_CONTENT_TYPE','需要 JSON 请求。');
         const input=await bodyJson(request);
+        if(url.pathname==='/api/manual-progress/preview')return json(response,200,store.previewManualProgress(input.text as string));
+        if(url.pathname==='/api/manual-progress/apply')return json(response,200,store.applyManualProgress(input.rows));
         const segments=url.pathname.split('/').filter(Boolean);
         const id=segments[2]?decodeURIComponent(segments[2]):'';
         if(segments[1]==='todos'&&segments[3]==='status'){

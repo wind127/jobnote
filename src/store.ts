@@ -3,6 +3,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { AppError, type MailPage, type Submission, STAGES, SELECTABLE_STAGES, STATUSES, CLASSIFICATIONS, type UpdateInput } from './types.js';
+import { parseManualProgress, type ManualProgressRow } from './manual-import.js';
 
 type Row = Record<string, unknown>;
 const nowIso = () => new Date().toISOString();
@@ -62,6 +63,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS todos (id TEXT PRIMARY KEY, application_id TEXT REFERENCES applications(id), event_id TEXT NOT NULL REFERENCES events(id), match_key TEXT NOT NULL, title TEXT NOT NULL, due_at TEXT, due_date TEXT, time_text TEXT, status TEXT NOT NULL DEFAULT 'open', manual_status INTEGER NOT NULL DEFAULT 0, version INTEGER NOT NULL DEFAULT 1, UNIQUE(application_id,match_key));
       CREATE TABLE IF NOT EXISTS digest_runs (slot INTEGER PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL, generated_at TEXT NOT NULL, event_cursor INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS review_items (id TEXT PRIMARY KEY, source_key TEXT NOT NULL, ordinal INTEGER NOT NULL, reason TEXT NOT NULL, company TEXT, position TEXT, stage TEXT, status TEXT, evidence TEXT NOT NULL, todo_json TEXT, created_at TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'open');
+      CREATE TABLE IF NOT EXISTS manual_updates (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL UNIQUE, application_id TEXT NOT NULL REFERENCES applications(id), stage TEXT NOT NULL, status TEXT NOT NULL, note TEXT NOT NULL, created_at TEXT NOT NULL);
     `);
     for (const [table, column, definition] of [
       ['batches', 'is_retry', 'INTEGER NOT NULL DEFAULT 0'],
@@ -315,6 +317,87 @@ export class Store {
     this.bumpVersion();
   }
 
+  previewManualProgress(text: string): object {
+    if (typeof text !== 'string' || text.length > 200_000) throw new AppError('BAD_IMPORT','文本不能为空，且不能超过 20 万字。');
+    const applications=asRows(this.db.prepare('SELECT id,company,position,stage,status,version FROM applications').all());
+    const aliases:Record<string,string>={阿里:'阿里巴巴',汇川:'汇川技术',零跑汽车:'零跑科技',长鑫存储:'长鑫科技',网易互联网:'网易'};
+    const parsed=parseManualProgress(text);
+    const counts=new Map<string,number>();
+    for(const row of parsed){
+      const company=aliases[row.company]??row.company;
+      const importKey=keyOf(company)+'|'+keyOf(row.position);
+      counts.set(importKey,(counts.get(importKey)??0)+1);
+    }
+    const rows=parsed.map(row=>{
+      const company=aliases[row.company]??row.company;
+      const matches=applications.filter(app=>keyOf(String(app.company))===keyOf(company));
+      const exact=matches.find(app=>keyOf(String(app.position))===keyOf(row.position));
+      const importKey=keyOf(company)+'|'+keyOf(row.position);
+      const repeated=(counts.get(importKey)??0)>1;
+      const fingerprint=row.stage&&row.status?createHash('sha256').update([keyOf(company),keyOf(row.position),row.stage,row.status,keyOf(row.note)].join('|')).digest('hex'):null;
+      const alreadyImported=fingerprint&&!!this.db.prepare('SELECT id FROM manual_updates WHERE fingerprint=?').get(fingerprint);
+      const stageRank=(stage:unknown)=>STAGES.indexOf(stage as typeof STAGES[number]);
+      const existingConflict=exact&&(
+        String(exact.stage)==='rejected'&&row.stage!=='rejected' ||
+        row.stage!=='rejected'&&stageRank(exact.stage)>stageRank(row.stage) ||
+        String(exact.stage)===row.stage&&String(exact.status)!==row.status
+      );
+      return {...row,company,already_imported:!!alreadyImported,matches:matches.map(app=>({id:app.id,position:app.position,version:app.version})),suggested_application_id:exact?.id??null,
+        warning:row.warning??(alreadyImported?'这条进度已导入，无需重复处理':repeated?'同一公司岗位在表格中出现多次，请只保留最终进展':existingConflict?'已有进展与表格记录不同，请确认是否覆盖':!exact&&matches.length?'同公司已有岗位，请选择关联岗位或明确新建':null)};
+    });
+    return { rows, total:rows.length, ready:rows.filter(row=>!row.warning).length, imported:rows.filter(row=>row.already_imported).length };
+  }
+
+  applyManualProgress(input: unknown): {created:number;updated:number;unchanged:number} {
+    if (!Array.isArray(input) || input.length>250) throw new AppError('BAD_IMPORT','导入记录数量无效。');
+    return this.transaction(()=>{
+      let created=0,updated=0,unchanged=0;
+      const fingerprints=new Set<string>();
+      const applicationKeys=new Set<string>();
+      for(const raw of input){
+        if(!raw||typeof raw!=='object')throw new AppError('BAD_IMPORT','导入记录格式无效。');
+        const row=raw as Partial<ManualProgressRow>&{application_id?:unknown;create_new?:unknown;expected_version?:unknown};
+        const company=clean(row.company,150),position=clean(row.position,150),stage=row.stage,status=row.status,note=clean(row.note,600);
+        if(!company||!position||!stage||!status||status==='unknown'||!SELECTABLE_STAGES.includes(stage as typeof SELECTABLE_STAGES[number])||!STATUSES.includes(status as typeof STATUSES[number]))throw new AppError('BAD_IMPORT','请补全公司、岗位、阶段和明确状态。');
+        const applicationKey=keyOf(company)+'|'+keyOf(position);
+        if(applicationKeys.has(applicationKey))throw new AppError('DUPLICATE_APPLICATION','同一公司岗位在本次导入中出现多次，请只勾选最终进展。');
+        applicationKeys.add(applicationKey);
+        const fingerprint=createHash('sha256').update([keyOf(company),keyOf(position),stage,status,keyOf(note)].join('|')).digest('hex');
+        if(fingerprints.has(fingerprint)||this.db.prepare('SELECT id FROM manual_updates WHERE fingerprint=?').get(fingerprint)){unchanged++;continue;}
+        fingerprints.add(fingerprint);
+        let app:Row|undefined;
+        if(typeof row.application_id==='string'&&row.application_id){
+          app=this.db.prepare('SELECT * FROM applications WHERE id=?').get(row.application_id) as Row|undefined;
+          if(!app||keyOf(String(app.company))!==keyOf(company))throw new AppError('BAD_APPLICATION','所选岗位与公司不匹配。');
+          if(keyOf(String(app.position))!==keyOf(position))throw new AppError('BAD_APPLICATION','所选岗位名称与导入记录不一致。');
+          if(Number(app.version)!==Number(row.expected_version))throw new AppError('VERSION_CONFLICT','岗位信息已变化，请刷新导入预览。');
+        } else if(row.create_new===true){
+          const allApps=asRows(this.db.prepare('SELECT id,company,position FROM applications').all());
+          if(allApps.some(item=>keyOf(String(item.company))===keyOf(company)&&keyOf(String(item.position))===keyOf(position)))throw new AppError('DUPLICATE_APPLICATION','该公司岗位已存在，请选择更新已有岗位。');
+        } else {
+          const allApps=asRows(this.db.prepare('SELECT * FROM applications').all());
+          const sameCompany=allApps.filter(item=>keyOf(String(item.company))===keyOf(company));
+          const exact=sameCompany.filter(item=>keyOf(String(item.position))===keyOf(position));
+          if(exact.length>1)throw new AppError('AMBIGUOUS_APPLICATION','同名岗位有多条记录，请指定关联岗位。');
+          app=exact[0];
+          if(!app&&sameCompany.length)throw new AppError('AMBIGUOUS_APPLICATION','同公司已有岗位，请选择关联岗位或明确新建。');
+        }
+        const at=nowIso();
+        if(app){
+          this.db.prepare('UPDATE applications SET stage=?,status=?,last_event_at=?,version=version+1 WHERE id=?').run(stage,status,at,String(app.id));
+          updated++;
+        }else{
+          const id=randomUUID();
+          this.db.prepare('INSERT INTO applications(id,company,position,stage,status,last_event_at) VALUES(?,?,?,?,?,?)').run(id,company,position,stage,status,at);
+          app={id};created++;
+        }
+        this.db.prepare('INSERT INTO manual_updates(id,fingerprint,application_id,stage,status,note,created_at) VALUES(?,?,?,?,?,?,?)').run(randomUUID(),fingerprint,String(app.id),stage,status,note,at);
+      }
+      if(created||updated)this.bumpVersion();
+      return {created,updated,unchanged};
+    });
+  }
+
   private openReviewRows(): Row[] {
     return asRows(this.db.prepare(`SELECT r.*,e.round,e.occurred_at,m.uid,m.subject,m.sender
       FROM review_items r JOIN events e ON e.source_key=r.source_key AND e.ordinal=r.ordinal
@@ -458,6 +541,7 @@ export class Store {
     const applications=asRows(this.db.prepare('SELECT * FROM applications ORDER BY last_event_at DESC').all());
     const todos=asRows(this.db.prepare('SELECT * FROM todos ORDER BY COALESCE(due_at,due_date) ASC').all());
     const events=asRows(this.db.prepare('SELECT e.*,m.subject,m.sender,m.received_at FROM events e JOIN mail_sources m ON m.source_key=e.source_key ORDER BY e.occurred_at DESC').all());
+    const manual_updates=asRows(this.db.prepare('SELECT * FROM manual_updates ORDER BY created_at DESC').all());
     const reviews:Row[]=groupReviews(this.openReviewRows()).map(group=>({
       ...group.at(-1)!,mail_count:group.length,
       notices:group.map(row=>({occurred_at:row.occurred_at,status:row.status,evidence:row.evidence})),
@@ -467,6 +551,6 @@ export class Store {
     const scan=this.scanState();
     const active=this.db.prepare("SELECT upper_uid FROM runs WHERE status='active' LIMIT 1").get() as Row | undefined;
     const scanIncomplete=!!active && (active.upper_uid===null || Number(scan.last_uid)<Number(active.upper_uid));
-    return { version:Number(this.setting('version')??'0'), demo_mode:this.setting('demo_mode')==='true', first_since:scan.first_since, last_success_at:scan.last_success_at, scan_incomplete:scanIncomplete, applications,todos,events,reviews,failures };
+    return { version:Number(this.setting('version')??'0'), demo_mode:this.setting('demo_mode')==='true', first_since:scan.first_since, last_success_at:scan.last_success_at, scan_incomplete:scanIncomplete, applications,todos,events,manual_updates,reviews,failures };
   }
 }
