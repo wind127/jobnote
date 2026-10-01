@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Store } from './store.js';
+import { AiReviewService } from './ai-review.js';
 import { AppError } from './types.js';
 
 function json(response: ServerResponse, status: number, body: unknown): void {
@@ -20,6 +21,7 @@ function bodyJson(request: IncomingMessage): Promise<Record<string,unknown>> {
 }
 
 export function startWeb(store: Store, port=3210): Promise<void> {
+  const ai=new AiReviewService(store);
   const publicDir=join(dirname(fileURLToPath(import.meta.url)),'public');
   const server=createServer(async(request,response)=>{
     try{
@@ -33,8 +35,7 @@ export function startWeb(store: Store, port=3210): Promise<void> {
         if(origin && origin!==`http://127.0.0.1:${port}`&&origin!==`http://localhost:${port}`)throw new AppError('BAD_ORIGIN','跨站请求已拒绝。');
         if(!String(request.headers['content-type']??'').startsWith('application/json'))throw new AppError('BAD_CONTENT_TYPE','需要 JSON 请求。');
         const input=await bodyJson(request);
-        if(url.pathname==='/api/manual-progress/preview')return json(response,200,store.previewManualProgress(input.text as string));
-        if(url.pathname==='/api/manual-progress/apply')return json(response,200,store.applyManualProgress(input.rows));
+        if(url.pathname==='/api/manual-progress/queue')return json(response,200,ai.queueManual(input.text as string));
         const segments=url.pathname.split('/').filter(Boolean);
         const id=segments[2]?decodeURIComponent(segments[2]):'';
         if(segments[1]==='todos'&&segments[3]==='status'){
@@ -42,10 +43,6 @@ export function startWeb(store: Store, port=3210): Promise<void> {
           store.setTodo(id,input.status,Number(input.expected_version));
         }else if(segments[1]==='applications'&&segments[3]==='edit'){
           store.editApplication(id,{company:input.company as string|undefined,position:input.position as string|undefined,stage:input.stage as string|undefined,status:input.status as string|undefined,expected_version:Number(input.expected_version)});
-        }else if(segments[1]==='reviews'&&segments[3]==='resolve'){
-          store.resolveReview(id,String(input.company??''),String(input.position??''),input.application_id?String(input.application_id):undefined,input.stage?String(input.stage):undefined,input.status?String(input.status):undefined);
-        }else if(segments[1]==='reviews'&&segments[3]==='ignore'){
-          store.ignoreReview(id);
         }else if(segments[1]==='failures'&&segments[3]==='skip'){
           store.skipFailure(id,String(input.reason??''));
         }else if(segments[1]==='failures'&&segments[3]==='retry'){

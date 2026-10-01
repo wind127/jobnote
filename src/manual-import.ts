@@ -9,6 +9,7 @@ export interface ManualProgressRow {
   stage: Stage | null;
   status: StageStatus | null;
   note: string;
+  source_text: string;
   warning: string | null;
 }
 
@@ -47,20 +48,21 @@ export function parseManualProgress(text: string): ManualProgressRow[] {
     if (!rejected && next) stage = phase(next[1]);
     const metaStage = meta.map(row=>row.slice(2,8).map(phase).filter(Boolean).at(-1)).filter(Boolean).at(-1);
     if (!rejected && metaStage && stage && PHASES.findIndex(([,value])=>value===metaStage)<PHASES.findIndex(([,value])=>value===stage)) stage=metaStage;
-    if (!stage) { pending = null; return; }
+    if (!stage && !position && !note) { pending = null; return; }
     const matchingMeta = latest ? meta.map(row => row[latest.index+2] ?? '').filter(Boolean).join(' ') : '';
     const conflicting=/待\s*(?:AI\s*面试|笔试|测评|一面|二面|三面)/i.test(note)&&/已完成|完成/.test(matchingMeta);
     const status: StageStatus = rejected ? 'failed' : next ? 'invited' : /已完成|完成/.test(matchingMeta) ? 'completed' :
       /待|预约|邀请/.test([progress.at(-1),note].join(' ')) ? 'invited' :
       stage === 'applied' ? 'received' : 'unknown';
-    const warning = !position || noRole.test(position) ? '岗位不明确，请补全后导入' :
+    const warning = !stage ? '未识别明确进展阶段，交给 AI 核对' :
+      !position || noRole.test(position) ? '岗位不明确，请补全后导入' :
       hasManyRoles.test(position) ? '包含多个岗位，请拆分或选择一个岗位' :
       conflicting ? '“待处理”和“已完成”同时出现，请确认真实状态' :
       rejected && /[一二三]\s*志愿/.test(joined) ? '只有部分志愿被淘汰，请确认这个岗位是否结束' :
       status==='unknown' ? '完成情况不明确，请确认状态' : null;
     result.push({
       key:createHash('sha256').update([line,company,position,progress.join('|'),note].join('\n')).digest('hex').slice(0,20),
-      line,company,position,stage,status,note,warning,
+      line,company,position,stage,status,note,source_text:[cells.join('\t'),...meta.map(row=>row.join('\t'))].join('\n').slice(0,2000),warning,
     });
     pending = null;
   }

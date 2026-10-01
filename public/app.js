@@ -14,7 +14,6 @@ function statusLabel(stage,status,detailed=false){
 }
 const $=id=>document.getElementById(id);
 let state={applications:[],todos:[],events:[],reviews:[],failures:[],version:-1};
-let importRows=[];
 let toastTimer;
 
 function el(tag,className='',text){const node=document.createElement(tag);if(className)node.className=className;if(text!==undefined)node.textContent=String(text);return node;}
@@ -29,7 +28,7 @@ function emptyBox(title,detail){const box=el('div','empty-box');appendText(box,'
 function sortTodos(a,b){const tier=item=>{if(item.status!=='open')return 4;const due=item.due_at?Date.parse(item.due_at):item.due_date?Date.parse(`${item.due_date}T23:59:59+08:00`):NaN;if(!Number.isFinite(due))return 3;if(due<Date.now())return 0;if(due<Date.now()+48*3600_000)return 1;return 2;};return tier(a)-tier(b)||String(a.due_at||a.due_date||'').localeCompare(String(b.due_at||b.due_date||''));}
 function todoTier(item){const due=item.due_at?Date.parse(item.due_at):item.due_date?Date.parse(`${item.due_date}T23:59:59+08:00`):NaN;if(!Number.isFinite(due))return {name:'时间待核对',className:'undated'};if(due<Date.now())return {name:'已逾期',className:'overdue'};if(due<Date.now()+48*3600_000)return {name:'未来 48 小时',className:'soon'};return {name:'之后',className:'later'};}
 function reviewTodo(review){if(!review.todo_json)return null;try{return JSON.parse(review.todo_json);}catch{return null;}}
-function reviewActions(review){const controls=el('div','table-actions');const fix=el('button','outline-button','核对');fix.type='button';fix.onclick=()=>openReview(review);const ignore=el('button','quiet-action','忽略');ignore.type='button';ignore.onclick=()=>action(`/api/reviews/${encodeURIComponent(review.id)}/ignore`,{},review.mail_count>1?'已忽略这组通知':'已忽略这条进展');controls.append(fix,ignore);return controls;}
+function reviewActions(review){return el('span','review-flag',review.state==='waiting'?'等待更多证据':'AI 核对中');}
 function renderTodoTable(container,items,completed=false){
   if(!items.length){if(!completed)container.append(emptyBox('眼下没有待办','新邮件整理后，测评、笔试和面试安排会出现在这里。'));return;}
   const scroll=el('div','table-scroll'),table=el('table','todos-table');
@@ -40,7 +39,7 @@ function renderTodoTable(container,items,completed=false){
   const body=el('tbody');
   for(const todo of items){
     const app=state.applications.find(item=>item.id===todo.application_id),tier=todoTier(todo),row=el('tr',completed?'done':tier.className);
-    const urgency=el('td');appendText(urgency,'span',`todo-priority ${completed?'done':tier.className}`,completed?'已完成':todo.review?`待核对 · ${tier.name}`:tier.name);row.append(urgency);
+    const urgency=el('td');appendText(urgency,'span',`todo-priority ${completed?'done':tier.className}`,completed?'已完成':todo.review?`${todo.review.state==='waiting'?'等待更多证据':'AI 核对中'} · ${tier.name}`:tier.name);row.append(urgency);
     appendText(row,'td','company-cell',app?.company||todo.company||'公司待核对');
     appendText(row,'td','position-cell',app?.position||todo.position||'岗位待核对');
     appendText(row,'td','todo-title-cell',todo.title);
@@ -59,11 +58,11 @@ function applicationRow(item,extraClass='',detailIndex=-1){
   const entry=item.record,phase=entry.stage;
   const row=el('tr',`stage-row stage-row-${phase}${item.review?' review-row':''}${extraClass?` ${extraClass}`:''}`);
   const company=el('td','company-cell');appendText(company,'strong','',detailIndex>=0?`通知 ${detailIndex+1}`:entry.company||'公司待核对');
-  if(item.review)appendText(company,'span','review-flag',entry.mail_count>1?`${entry.mail_count} 封邮件`:'待核对');
+  if(item.review)appendText(company,'span','review-flag',entry.state==='waiting'?'等待更多证据':entry.mail_count>1?`${entry.mail_count} 封邮件 · AI 核对中`:'AI 核对中');
   row.append(company);
   const position=el('td','position-cell');appendText(position,'strong','',entry.position||'岗位待核对');if(item.review&&entry.reason)appendText(position,'span','review-reason',entry.reason);row.append(position);
   const stageCell=el('td');stageCell.append(stageBadge(phase));row.append(stageCell);
-  appendText(row,'td','status-cell',statusLabel(phase,entry.status));
+  appendText(row,'td','status-cell',item.review?(entry.state==='waiting'?'等待更多证据':'AI 核对中'):statusLabel(phase,entry.status));
   const next=item.review?reviewTodo(entry):state.todos.find(todo=>todo.application_id===entry.id&&todo.status==='open');
   appendText(row,'td',next?'next-cell':'muted-cell',next?.title||'—');
   appendText(row,'td','date-cell',next?.due_at?shortDate(next.due_at):next?.due_date?`${next.due_date}（仅日期）`:next?.time_text||'—');
@@ -78,20 +77,20 @@ function reviewClusterRows(item,firstInStage){
   const row=el('tr',`stage-row stage-row-${phase} cluster-row${firstInStage?' stage-start':''}`);
   const company=el('td','company-cell');appendText(company,'strong','',entry.company||'公司待核对');
   const mailCount=reviews.reduce((sum,review)=>sum+(Number(review.mail_count)||1),0);
-  appendText(company,'span','review-flag',`${reviews.length} 项待核对 · ${mailCount} 封邮件`);row.append(company);
+  appendText(company,'span','review-flag',`${reviews.length} 项 AI 核对 · ${mailCount} 封邮件`);row.append(company);
   const roles=[...new Set(reviews.map(review=>review.position).filter(Boolean))];
   const hasUnknownRole=reviews.some(review=>!review.position);
   appendText(row,'td','position-cell',roles.length===1&&!hasUnknownRole?roles[0]:roles.length>1?`${roles.length} 个岗位待核对`:hasUnknownRole&&roles.length?'部分岗位待核对':'岗位待核对');
   const stageCell=el('td');stageCell.append(stageBadge(phase));row.append(stageCell);
-  appendText(row,'td','status-cell','待核对');
+  appendText(row,'td','status-cell',entry.state==='waiting'?'等待更多证据':'AI 核对中');
   const tasks=reviews.map(reviewTodo).filter(Boolean),titles=[...new Set(tasks.map(todo=>todo.title).filter(Boolean))];
   appendText(row,'td','next-cell',titles.length===1?titles[0]:titles.length>1?`${titles.length} 项不同安排，展开查看`:'展开查看邮件进展');
   const deadlines=[...new Set(tasks.map(todo=>todo.due_at?shortDate(todo.due_at):todo.due_date?`${todo.due_date}（仅日期）`:todo.time_text).filter(Boolean))];
   appendText(row,'td','date-cell',deadlines.length===1?deadlines[0]:deadlines.length>1?'多个时间':'—');
   appendText(row,'td','date-cell',shortDate(entry.occurred_at||entry.created_at));
-  const actionCell=el('td'),toggle=el('button','outline-button','查看待确认邮件');toggle.type='button';toggle.setAttribute('aria-expanded','false');
+  const actionCell=el('td'),toggle=el('button','outline-button','查看邮件依据');toggle.type='button';toggle.setAttribute('aria-expanded','false');
   const details=reviews.map((review,index)=>{const detail=applicationRow({record:review,review:true},'cluster-detail',index);detail.hidden=true;return detail;});
-  toggle.onclick=()=>{const open=toggle.getAttribute('aria-expanded')!=='true';toggle.setAttribute('aria-expanded',String(open));toggle.textContent=open?'收起明细':'查看待确认邮件';details.forEach(detail=>{detail.hidden=!open;});};
+  toggle.onclick=()=>{const open=toggle.getAttribute('aria-expanded')!=='true';toggle.setAttribute('aria-expanded',String(open));toggle.textContent=open?'收起明细':'查看邮件依据';details.forEach(detail=>{detail.hidden=!open;});};
   actionCell.append(toggle);row.append(actionCell);
   return [row,...details];
 }
@@ -122,67 +121,23 @@ function renderApplications(){
   }
   table.append(body);scroll.append(table);list.append(scroll);
 }
-function render(){$('workspace-label').textContent=state.demo_mode?'演示数据 · 本机工作区':'真实邮箱 · 本机工作区';const companies=new Set(state.applications.map(app=>app.company));$('company-count').textContent=companies.size;$('position-count').textContent=state.applications.length;$('review-count').textContent=state.reviews.length;const last=state.last_success_at;const stale=!last||Date.now()-Date.parse(last)>4*3600_000;$('sync-led').classList.toggle('error',stale);$('sync-status').textContent=state.scan_incomplete?`首轮整理未完成 · 仍有历史邮件待处理`:last?`${stale?'邮件进度可能未更新 · ':''}上次成功读取 ${shortDate(last)}`:'尚未读取邮箱，请运行读信任务';$('update-time').textContent=state.scan_incomplete?'首轮未完成':last?`最近更新 ${shortDate(last)}`:'等待首次读取';renderTodos();renderFailures();renderApplications();}
+function render(){$('workspace-label').textContent=state.demo_mode?'演示数据 · 本机工作区':'真实邮箱 · 本机工作区';const companies=new Set(state.applications.map(app=>app.company));$('company-count').textContent=companies.size;$('position-count').textContent=state.applications.length;$('review-count').textContent=state.reviews.length+(state.manual_review_count||0);$('ai-queue-banner').hidden=!state.manual_review_count;$('ai-queue-banner').textContent=state.manual_review_count?`已有进度表：${state.manual_review_open||0} 条 AI 核对中，${state.manual_review_waiting||0} 条等待更多证据。定时任务会读取原文及现有岗位后处理。`:'';const last=state.last_success_at;const stale=!last||Date.now()-Date.parse(last)>4*3600_000;$('sync-led').classList.toggle('error',stale);$('sync-status').textContent=state.scan_incomplete?`首轮整理未完成 · 仍有历史邮件待处理`:last?`${stale?'邮件进度可能未更新 · ':''}上次成功读取 ${shortDate(last)}`:'尚未读取邮箱，请运行读信任务';$('update-time').textContent=state.scan_incomplete?'首轮未完成':last?`最近更新 ${shortDate(last)}`:'等待首次读取';renderTodos();renderFailures();renderApplications();}
 function openDetail(app){const container=$('detail-content');container.replaceChildren();appendText(container,'p','eyebrow','岗位时间线');appendText(container,'h2','',app.position);appendText(container,'p','detail-company',app.company);const events=state.events.filter(item=>item.application_id===app.id),manual=(state.manual_updates||[]).filter(item=>item.application_id===app.id);if(!events.length&&!manual.length)container.append(emptyBox('尚无时间线','新邮件整理后会显示在这里。'));for(const update of manual){const item=el('article','timeline-item');appendText(item,'span','timeline-date',shortDate(update.created_at));appendText(item,'h3','',`${stageLabel(update.stage)} · ${statusLabel(update.stage,update.status)}`);appendText(item,'p','timeline-evidence',update.note||'用户提供的进度信息');appendText(item,'small','','来源：手动导入');container.append(item);}for(const event of events){const item=el('article','timeline-item');appendText(item,'span','timeline-date',shortDate(event.occurred_at));const round=event.round&&!/^interview_[123]$/.test(event.stage)?` · ${event.round}`:'';appendText(item,'h3','',`${stageLabel(event.stage)} · ${statusLabel(event.stage,event.status)}${round}`);appendText(item,'p','timeline-evidence',event.evidence);appendText(item,'small','',`来自：${event.subject||'无主题'} · ${event.sender||'未知发件人'}`);container.append(item);}$('detail-dialog').showModal();}
 function fillStageOptions(id,selected){const select=$(id);select.replaceChildren();if(!STAGE[selected])select.add(new Option('请选择具体阶段',''));for(const [value,label] of Object.entries(STAGE))select.add(new Option(label,value));select.value=STAGE[selected]?selected:'';}
 function fillStatusOptions(id,stage,selected){const select=$(id);select.replaceChildren();for(const value of Object.keys(STATUS))select.add(new Option(statusLabel(stage,value,true),value));select.value=selected;}
-function openReview(review){$('review-id').value=review.id;$('review-company').value=review.company||'';$('review-position').value=review.position||'';$('review-context').textContent=review.mail_count>1?`${review.reason} · 已汇总 ${review.mail_count} 封同岗位、同阶段通知；保存会一次关联这些邮件。`:review.reason;$('review-evidence').textContent=review.mail_count>1?review.notices.slice().reverse().map(item=>`${shortDate(item.occurred_at)} · ${statusLabel(review.stage,item.status)}\n${item.evidence}`).join('\n\n'):review.evidence||'邮件没有可显示的证据片段';fillStageOptions('review-stage',review.stage);fillStatusOptions('review-status',review.stage,review.status);const select=$('review-application');select.replaceChildren(new Option('自动匹配或新建',''));for(const app of state.applications)select.add(new Option(`${app.company} · ${app.position}`,app.id));$('review-dialog').showModal();}
 function openEdit(app){$('edit-id').value=app.id;$('edit-version').value=app.version;$('edit-company').value=app.company;$('edit-position').value=app.position;fillStageOptions('edit-stage',app.stage);fillStatusOptions('edit-status',app.stage,app.status);$('edit-dialog').showModal();}
 function openSkip(failure){$('skip-key').value=failure.source_key;$('skip-reason').value='';$('skip-dialog').showModal();}
-function importField(card,label,value,className){const wrap=el('label','import-field',label),input=el('input',className);input.value=value||'';input.maxLength=150;wrap.append(input);card.append(wrap);return input;}
-function renderImportPreview(){
-  const container=$('import-preview');container.replaceChildren();
-  for(const [index,row] of importRows.entries()){
-    const card=el('div','import-row');card.dataset.importIndex=String(index);
-    const header=el('div','import-row-head'),check=el('input','import-check');check.type='checkbox';check.checked=!row.warning;check.setAttribute('aria-label',`导入第 ${row.line} 行 ${row.company}`);
-    const title=el('strong','',`${row.company} · ${row.position||'岗位待补全'}`);header.append(check,title);card.append(header);
-    const fields=el('div','import-fields');card.append(fields);
-    importField(fields,'公司',row.company,'import-company');importField(fields,'岗位',row.position,'import-position');
-    const stageWrap=el('label','import-field','阶段'),stage=el('select','import-stage');for(const [value,label] of Object.entries(STAGE))stage.add(new Option(label,value));stage.value=row.stage;stageWrap.append(stage);fields.append(stageWrap);
-    const statusWrap=el('label','import-field','状态'),status=el('select','import-status');for(const [value,label] of Object.entries(STATUS))status.add(new Option(label,value));status.value=row.status;statusWrap.append(status);fields.append(statusWrap);
-    const matchWrap=el('label','import-field','关联方式'),match=el('select','import-match');
-    if(row.matches.length)match.add(new Option('请选择已有岗位或新建',''));
-    for(const app of row.matches)match.add(new Option(`更新：${app.position}`,app.id));
-    match.add(new Option('新建岗位记录','new'));
-    match.value=row.suggested_application_id||(!row.matches.length?'new':'');
-    match.addEventListener('change',()=>{const app=row.matches.find(item=>item.id===match.value);if(app)card.querySelector('.import-position').value=app.position;});
-    matchWrap.append(match);fields.append(matchWrap);
-    if(row.warning)appendText(card,'p','import-warning',row.warning);
-    if(row.note)appendText(card,'p','import-note',row.note);
-    container.append(card);
-  }
-  $('import-apply-bar').hidden=!importRows.length;
-}
-async function previewImport(){
-  try{
-    const text=$('import-text').value.trim();if(!text){showToast('请先粘贴进度文本');return;}
-    const result=await api('/api/manual-progress/preview',{text});importRows=result.rows;
-    $('import-summary').textContent=`识别 ${result.total} 条进度：${result.imported} 条已导入，${result.ready} 条可直接导入，${result.total-result.imported-result.ready} 条需核对。含多个岗位的记录请拆分后再导入。`;
-    renderImportPreview();
-  }catch(error){showToast(error.message);}
-}
-async function applyImport(){
-  const rows=[...document.querySelectorAll('[data-import-index]')].filter(card=>card.querySelector('.import-check').checked).map(card=>{
-    const original=importRows[Number(card.dataset.importIndex)],match=card.querySelector('.import-match').value;
-    const app=original.matches.find(item=>item.id===match);
-    return {company:card.querySelector('.import-company').value.trim(),position:card.querySelector('.import-position').value.trim(),stage:card.querySelector('.import-stage').value,status:card.querySelector('.import-status').value,note:original.note,application_id:app?.id,expected_version:app?.version,create_new:match==='new'};
-  });
-  if(!rows.length){showToast('请先勾选要导入的记录');return;}
-  if(rows.some(row=>!row.company||!row.position||row.status==='unknown'||(!row.application_id&&!row.create_new))){showToast('请补全公司、岗位、明确状态，并选择关联方式');return;}
-  try{const result=await api('/api/manual-progress/apply',{rows});$('import-dialog').close();showToast(`已新增 ${result.created} 条、更新 ${result.updated} 条；${result.unchanged} 条未变化`);await refresh();}
+async function queueImport(){
+  const text=$('import-text').value.trim();if(!text){showToast('请先粘贴或选择进度表');return;}
+  try{const result=await api('/api/manual-progress/queue',{text});$('import-summary').textContent=`已交给 AI 核对 ${result.queued} 条；${result.already_queued} 条已在队列，${result.already_imported} 条此前已导入。定时任务处理后，网页会自动显示结果。`;showToast(`已加入 AI 核对队列：${result.queued} 条`);await refresh();}
   catch(error){showToast(error.message);}
 }
-function bind(){ $('header-date').textContent=new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'long',day:'numeric',weekday:'long'}).format(new Date());$('search').addEventListener('input',renderApplications);$('stage-filter').addEventListener('change',renderApplications);for(const button of document.querySelectorAll('[data-close]'))button.addEventListener('click',()=>$(button.dataset.close).close());$('review-form').addEventListener('submit',async event=>{event.preventDefault();if(await action(`/api/reviews/${encodeURIComponent($('review-id').value)}/resolve`,{company:$('review-company').value,position:$('review-position').value,stage:$('review-stage').value,status:$('review-status').value,application_id:$('review-application').value},'进展已确认'))$('review-dialog').close();});$('edit-form').addEventListener('submit',async event=>{event.preventDefault();if(await action(`/api/applications/${encodeURIComponent($('edit-id').value)}/edit`,{company:$('edit-company').value,position:$('edit-position').value,stage:$('edit-stage').value,status:$('edit-status').value,expected_version:Number($('edit-version').value)},'岗位信息已更新'))$('edit-dialog').close();});$('skip-form').addEventListener('submit',async event=>{event.preventDefault();if(await action(`/api/failures/${encodeURIComponent($('skip-key').value)}/skip`,{reason:$('skip-reason').value},'已记录跳过决定'))$('skip-dialog').close();});}
+function bind(){ $('header-date').textContent=new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'long',day:'numeric',weekday:'long'}).format(new Date());$('search').addEventListener('input',renderApplications);$('stage-filter').addEventListener('change',renderApplications);for(const button of document.querySelectorAll('[data-close]'))button.addEventListener('click',()=>$(button.dataset.close).close());$('edit-form').addEventListener('submit',async event=>{event.preventDefault();if(await action(`/api/applications/${encodeURIComponent($('edit-id').value)}/edit`,{company:$('edit-company').value,position:$('edit-position').value,stage:$('edit-stage').value,status:$('edit-status').value,expected_version:Number($('edit-version').value)},'岗位信息已更新'))$('edit-dialog').close();});$('skip-form').addEventListener('submit',async event=>{event.preventDefault();if(await action(`/api/failures/${encodeURIComponent($('skip-key').value)}/skip`,{reason:$('skip-reason').value},'已记录跳过决定'))$('skip-dialog').close();});}
 bind();
 $('open-import').addEventListener('click',()=>$('import-dialog').showModal());
-$('import-file').addEventListener('change',async event=>{const file=event.target.files?.[0];if(!file)return;if(file.size>200_000){showToast('文件不能超过 200 KB');return;}$('import-text').value=await file.text();importRows=[];$('import-preview').replaceChildren();$('import-apply-bar').hidden=true;$('import-summary').textContent=`已读取 ${file.name}，请生成预览。`;});
-$('preview-import').addEventListener('click',previewImport);
-$('apply-import').addEventListener('click',applyImport);
-for(const prefix of ['review','edit'])$(prefix+'-stage').addEventListener('change',event=>{
+$('import-file').addEventListener('change',async event=>{const file=event.target.files?.[0];if(!file)return;if(file.size>200_000){showToast('文件不能超过 200 KB');return;}$('import-text').value=await file.text();$('import-summary').textContent=`已读取 ${file.name}，可以交给 AI 核对。`;});
+$('queue-import').addEventListener('click',queueImport);
+for(const prefix of ['edit'])$(prefix+'-stage').addEventListener('change',event=>{
   const status=$(prefix+'-status');fillStatusOptions(prefix+'-status',event.target.value,status.value);
-});
-$('review-application').addEventListener('change',event=>{
-  const app=state.applications.find(item=>item.id===event.target.value);
-  if(app){$('review-company').value=app.company;$('review-position').value=app.position;}
 });
 refresh();setInterval(()=>refresh(true),30_000);

@@ -39,22 +39,13 @@
 @media(max-width:480px){.overview{grid-template-columns:minmax(0,1fr) 91px}.overview-count{min-width:0;padding-left:12px}.overview-count strong{font-size:32px}.overview-count .count-label{font-size:10px}.sync-line{font-size:11px}.summary-strip strong{font-size:22px}}
 .review-dialog{width:min(600px,calc(100% - 30px))}
 .heading-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.ai-queue-banner{margin:0 0 14px;padding:12px 15px;border:1px solid #cbdedb;border-radius:10px;background:#f2f8f7;color:#245d63;font-size:12px;line-height:1.6}
 .import-dialog{width:min(980px,calc(100% - 24px))}
 .import-dialog .dialog-inner{max-height:88vh}
 .import-dialog textarea{min-height:135px;font-family:ui-monospace,Consolas,monospace;font-size:12px}
 .import-file{display:inline-block!important;cursor:pointer;color:var(--sea)}
 .import-file input{font-size:11px;max-width:240px}
 .dialog-buttons{display:flex;justify-content:flex-end;gap:10px}
-.import-preview{display:grid;gap:10px;margin-top:12px;padding-right:4px}
-.import-row{border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:#fcfdfd}
-.import-row-head{display:flex;align-items:center;gap:8px;font-size:13px}
-.import-row-head input{width:auto;margin:0;accent-color:var(--sea)}
-.import-fields{display:grid;grid-template-columns:1fr 1.4fr 120px 120px 1.5fr;gap:9px;align-items:end}
-.import-dialog .import-field{min-width:0;margin:8px 0 0;font-size:11px}
-.import-dialog .import-field input,.import-dialog .import-field select{min-width:0;margin-top:4px;font-size:11px;padding:8px}
-.import-warning{color:#9f5c23;font-size:11px;margin:8px 0 0}
-.import-note{color:var(--muted);font-size:11px;line-height:1.5;margin:8px 0 0;overflow-wrap:anywhere}
-@media(max-width:800px){.import-fields{grid-template-columns:repeat(2,minmax(0,1fr))}.import-fields .import-field:last-child{grid-column:1/-1}}
 .review-dialog .dialog-inner{display:grid;grid-template-columns:1fr 1fr;column-gap:14px}
 .review-dialog .dialog-inner>:not(label){grid-column:1/-1}
 .review-dialog label:last-of-type{grid-column:1/-1}

@@ -64,6 +64,8 @@ export class Store {
       CREATE TABLE IF NOT EXISTS digest_runs (slot INTEGER PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL, generated_at TEXT NOT NULL, event_cursor INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS review_items (id TEXT PRIMARY KEY, source_key TEXT NOT NULL, ordinal INTEGER NOT NULL, reason TEXT NOT NULL, company TEXT, position TEXT, stage TEXT, status TEXT, evidence TEXT NOT NULL, todo_json TEXT, created_at TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'open');
       CREATE TABLE IF NOT EXISTS manual_updates (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL UNIQUE, application_id TEXT NOT NULL REFERENCES applications(id), stage TEXT NOT NULL, status TEXT NOT NULL, note TEXT NOT NULL, created_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS manual_review_items (id TEXT PRIMARY KEY, source_key TEXT NOT NULL UNIQUE, company TEXT NOT NULL, position TEXT NOT NULL, stage TEXT, status TEXT, note TEXT NOT NULL, source_text TEXT NOT NULL, reason TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'open', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS ai_decisions (id TEXT PRIMARY KEY, kind TEXT NOT NULL, item_id TEXT NOT NULL, decision TEXT NOT NULL, reason TEXT NOT NULL, evidence_quote TEXT NOT NULL, output_json TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(kind,item_id));
     `);
     for (const [table, column, definition] of [
       ['batches', 'is_retry', 'INTEGER NOT NULL DEFAULT 0'],
@@ -273,7 +275,7 @@ export class Store {
             reviews++;
           } else if (app) {
             applied++;
-            if (!Number(app.manual_stage) && Date.parse(iso(update.occurred_at)??String(local.received_at)) >= Date.parse(String(app.last_event_at))) {
+            if (!Number(app.manual_stage) && this.shouldAdvanceApplication(app,update.stage,iso(update.occurred_at)??String(local.received_at))) {
               this.db.prepare('UPDATE applications SET stage=?,status=?,last_event_at=?,version=version+1 WHERE id=?').run(update.stage,update.status,iso(update.occurred_at)??String(local.received_at),String(app.id));
             }
             if (update.todo) this.upsertTodo(String(app.id),eventId,update);
@@ -299,6 +301,14 @@ export class Store {
     } else {
       this.db.prepare('INSERT INTO todos(id,application_id,event_id,match_key,title,due_at,due_date,time_text,status) VALUES(?,?,?,?,?,?,?,?,?)').run(randomUUID(),appId,eventId,match,clean(todo.title),iso(todo.due_at),clean(todo.due_date,10)||null,clean(todo.time_text,250)||null,update.status==='cancelled'?'cancelled':'open');
     }
+  }
+
+  private shouldAdvanceApplication(app:Row,phase:string,occurredAt:string):boolean {
+    if(Date.parse(occurredAt)>=Date.parse(String(app.last_event_at)))return true;
+    if(String(app.stage)==='rejected'||phase==='rejected')return false;
+    const manual=this.db.prepare('SELECT created_at FROM manual_updates WHERE application_id=? ORDER BY created_at DESC LIMIT 1').get(String(app.id)) as Row|undefined;
+    const stillAtImportTime=manual&&String(manual.created_at)===String(app.last_event_at);
+    return !!stillAtImportTime&&STAGES.indexOf(phase as typeof STAGES[number])>STAGES.indexOf(String(app.stage) as typeof STAGES[number]);
   }
 
   setTodo(id: string, status: 'open'|'done', expectedVersion: number): void {
@@ -404,6 +414,12 @@ export class Store {
       JOIN mail_sources m ON m.source_key=r.source_key WHERE r.state='open'`).all());
   }
 
+  private visibleReviewRows(): Row[] {
+    return asRows(this.db.prepare(`SELECT r.*,e.round,e.occurred_at,m.uid,m.subject,m.sender
+      FROM review_items r JOIN events e ON e.source_key=r.source_key AND e.ordinal=r.ordinal
+      JOIN mail_sources m ON m.source_key=r.source_key WHERE r.state IN ('open','waiting')`).all());
+  }
+
   private reviewMembers(id: string): Row[] {
     const rows=this.openReviewRows();
     const selected=rows.find(row=>row.id===id);
@@ -452,7 +468,7 @@ export class Store {
     return {app:candidates[0],phase};
   }
 
-  private applyReviewGroup(members: Row[], app: Row, phase: string, result: string, resolvedBy: 'auto'|'manual'): void {
+  private applyReviewGroup(members: Row[], app: Row, phase: string, result: string, resolvedBy: 'auto'|'manual'|'ai'): void {
     const review=members.at(-1)!;
     const event=this.db.prepare('SELECT * FROM events WHERE source_key=? AND ordinal=?').get(String(review.source_key),Number(review.ordinal)) as Row|undefined;
     if(!event)throw new AppError('EVENT_NOT_FOUND','对应邮件进展不存在。');
@@ -462,7 +478,7 @@ export class Store {
       this.db.prepare('UPDATE events SET application_id=?,stage=?,status=?,needs_review=0 WHERE id=?').run(String(app.id),phase,member.id===review.id?result:String(member.status),String(memberEvent.id));
       this.db.prepare("UPDATE review_items SET state='resolved',resolved_by=? WHERE id=?").run(resolvedBy,String(member.id));
     }
-    const isCurrent=Date.parse(String(event.occurred_at))>=Date.parse(String(app.last_event_at));
+    const isCurrent=this.shouldAdvanceApplication(app,phase,String(event.occurred_at));
     if(!Number(app.manual_stage)&&isCurrent){
       this.db.prepare('UPDATE applications SET stage=?,status=?,last_event_at=?,version=version+1 WHERE id=?').run(phase,result,String(event.occurred_at),String(app.id));
     }
@@ -474,13 +490,13 @@ export class Store {
   }
 
   private reconcileReviewsInTransaction(dryRun=false): {groups:number;notifications:number;unresolved:number} {
-    const rows=this.openReviewRows();
+    const rows=this.visibleReviewRows();
     const applications=asRows(this.db.prepare('SELECT * FROM applications').all());
     let groups=0,notifications=0,reasonChanges=0;
     for(const members of groupReviews(rows)){
       const plan=this.autoReviewPlan(members,applications,rows);
       if('reason' in plan){
-        if(!dryRun)for(const member of members)if(member.reason!==plan.reason){
+        if(!dryRun)for(const member of members)if(member.state==='open'&&member.reason!==plan.reason){
           this.db.prepare("UPDATE review_items SET reason=? WHERE id=? AND state='open'").run(plan.reason,String(member.id));
           reasonChanges++;
         }
@@ -499,7 +515,7 @@ export class Store {
     return this.transaction(()=>this.reconcileReviewsInTransaction());
   }
 
-  resolveReview(id: string, company: string, position: string, applicationId?: string, stage?: string, status?: string): void {
+  resolveReview(id: string, company: string, position: string, applicationId?: string, stage?: string, status?: string, resolvedBy: 'manual'|'ai'='manual'): void {
     this.transaction(() => {
       const members=this.reviewMembers(id);
       const review=members.at(-1)!;
@@ -525,7 +541,7 @@ export class Store {
           app=this.db.prepare('SELECT * FROM applications WHERE id=?').get(appId) as Row;
         }
       }
-      this.applyReviewGroup(members,app,phase,result,'manual');
+      this.applyReviewGroup(members,app,phase,result,resolvedBy);
       this.bumpVersion();
     });
   }
@@ -537,12 +553,25 @@ export class Store {
     });
   }
 
+  deferReview(id: string, reason: string): void {
+    this.transaction(()=>{
+      const explanation=clean(reason,500);
+      if(!explanation)throw new AppError('REASON_REQUIRED','请说明还缺少什么证据。');
+      for(const member of this.reviewMembers(id))this.db.prepare("UPDATE review_items SET state='waiting',reason=? WHERE id=?").run(explanation,String(member.id));
+      this.bumpVersion();
+    });
+  }
+
   dashboard(): object {
     const applications=asRows(this.db.prepare('SELECT * FROM applications ORDER BY last_event_at DESC').all());
     const todos=asRows(this.db.prepare('SELECT * FROM todos ORDER BY COALESCE(due_at,due_date) ASC').all());
     const events=asRows(this.db.prepare('SELECT e.*,m.subject,m.sender,m.received_at FROM events e JOIN mail_sources m ON m.source_key=e.source_key ORDER BY e.occurred_at DESC').all());
     const manual_updates=asRows(this.db.prepare('SELECT * FROM manual_updates ORDER BY created_at DESC').all());
-    const reviews:Row[]=groupReviews(this.openReviewRows()).map(group=>({
+    const manual_review_open=Number((this.db.prepare("SELECT COUNT(*) AS count FROM manual_review_items WHERE state='open'").get() as Row).count);
+    const manual_review_waiting=Number((this.db.prepare("SELECT COUNT(*) AS count FROM manual_review_items WHERE state='waiting'").get() as Row).count);
+    const manual_review_count=manual_review_open+manual_review_waiting;
+    const visible=this.visibleReviewRows();
+    const reviews:Row[]=[...groupReviews(visible.filter(row=>row.state==='open')),...groupReviews(visible.filter(row=>row.state==='waiting'))].map(group=>({
       ...group.at(-1)!,mail_count:group.length,
       notices:group.map(row=>({occurred_at:row.occurred_at,status:row.status,evidence:row.evidence})),
     }));
@@ -551,6 +580,6 @@ export class Store {
     const scan=this.scanState();
     const active=this.db.prepare("SELECT upper_uid FROM runs WHERE status='active' LIMIT 1").get() as Row | undefined;
     const scanIncomplete=!!active && (active.upper_uid===null || Number(scan.last_uid)<Number(active.upper_uid));
-    return { version:Number(this.setting('version')??'0'), demo_mode:this.setting('demo_mode')==='true', first_since:scan.first_since, last_success_at:scan.last_success_at, scan_incomplete:scanIncomplete, applications,todos,events,manual_updates,reviews,failures };
+    return { version:Number(this.setting('version')??'0'), demo_mode:this.setting('demo_mode')==='true', first_since:scan.first_since, last_success_at:scan.last_success_at, scan_incomplete:scanIncomplete, applications,todos,events,manual_updates,manual_review_count,manual_review_open,manual_review_waiting,reviews,failures };
   }
 }
