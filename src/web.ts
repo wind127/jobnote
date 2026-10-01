@@ -51,7 +51,7 @@ export function startWeb(store: Store, port=3210): Promise<void> {
         return json(response,200,{ok:true});
       }
       if(request.method!=='GET')return json(response,405,{error:'METHOD_NOT_ALLOWED'});
-      const files:Record<string,[string,string]>={'/':['index.html','text/html; charset=utf-8'],'/app.js':['app.js','text/javascript; charset=utf-8'],'/styles.css':['styles.css','text/css; charset=utf-8']};
+      const files:Record<string,[string,string]>={'/':['index.html','text/html; charset=utf-8'],'/app.js':['app.js','text/javascript; charset=utf-8'],'/styles.css':['styles.css','text/css; charset=utf-8'],'/redesign.css':['redesign.css','text/css; charset=utf-8']};
       const file=files[url.pathname];
       if(!file)return json(response,404,{error:'NOT_FOUND'});
       const contents=await readFile(join(publicDir,file[0]));
