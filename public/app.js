@@ -25,8 +25,8 @@ async function refresh(silent=false){try{const response=await fetch('/api/dashbo
 async function action(url,body,message){try{await api(url,body);showToast(message);await refresh();return true;}catch(error){showToast(error.message);return false;}}
 function appendText(parent,tag,className,text){const child=el(tag,className,text);parent.append(child);return child;}
 function emptyBox(title,detail){const box=el('div','empty-box');appendText(box,'strong','',title);appendText(box,'p','',detail);return box;}
-function sortTodos(a,b){const tier=item=>{if(item.status!=='open')return 4;const due=item.due_at?Date.parse(item.due_at):item.due_date?Date.parse(`${item.due_date}T23:59:59+08:00`):NaN;if(!Number.isFinite(due))return 3;if(due<Date.now())return 0;if(due<Date.now()+48*3600_000)return 1;return 2;};return tier(a)-tier(b)||String(a.due_at||a.due_date||'').localeCompare(String(b.due_at||b.due_date||''));}
-function todoTier(item){const due=item.due_at?Date.parse(item.due_at):item.due_date?Date.parse(`${item.due_date}T23:59:59+08:00`):NaN;if(!Number.isFinite(due))return {name:'时间待核对',className:'undated'};if(due<Date.now())return {name:'已逾期',className:'overdue'};if(due<Date.now()+48*3600_000)return {name:'未来 48 小时',className:'soon'};return {name:'之后',className:'later'};}
+function sortTodos(a,b){const ranks={overdue:0,critical:1,soon:2,later:3,undated:4};return ranks[todoTier(a).className]-ranks[todoTier(b).className]||String(a.due_at||a.due_date||'').localeCompare(String(b.due_at||b.due_date||''));}
+function todoTier(item){const due=item.due_at?Date.parse(item.due_at):item.due_date?Date.parse(`${item.due_date}T23:59:59+08:00`):NaN;if(!Number.isFinite(due))return {name:'时间待定',className:'undated'};if(due<Date.now())return {name:'已逾期',className:'overdue'};if(due<Date.now()+24*3600_000)return {name:'24 小时内',className:'critical'};if(due<Date.now()+48*3600_000)return {name:'48 小时内',className:'soon'};return {name:'时间充裕',className:'later'};}
 function reviewTodo(review){if(!review.todo_json)return null;try{return JSON.parse(review.todo_json);}catch{return null;}}
 function reviewActions(review){return el('span','review-flag',review.state==='waiting'?'等待更多证据':'AI 核对中');}
 function renderTodoTable(container,items,completed=false){
@@ -34,24 +34,26 @@ function renderTodoTable(container,items,completed=false){
   const scroll=el('div','table-scroll'),table=el('table','todos-table');
   appendText(table,'caption','sr-only',completed?'已完成待办表':'待办事项表');
   const head=el('thead'),headRow=el('tr');
-  for(const name of ['紧急程度','公司','岗位','待办事项','截止时间','操作']){const cell=el('th','',name);cell.scope='col';headRow.append(cell);}
+  for(const name of ['公司 / 岗位','待办事项','截止 / 紧急度','处理状态','操作']){const cell=el('th','',name);cell.scope='col';headRow.append(cell);}
   head.append(headRow);table.append(head);
   const body=el('tbody');
   for(const todo of items){
     const app=state.applications.find(item=>item.id===todo.application_id),tier=todoTier(todo),row=el('tr',completed?'done':tier.className);
-    const urgency=el('td');appendText(urgency,'span',`todo-priority ${completed?'done':tier.className}`,completed?'已完成':todo.review?`${todo.review.state==='waiting'?'等待更多证据':'AI 核对中'} · ${tier.name}`:tier.name);row.append(urgency);
-    appendText(row,'td','company-cell',app?.company||todo.company||'公司待核对');
-    appendText(row,'td','position-cell',app?.position||todo.position||'岗位待核对');
-    appendText(row,'td','todo-title-cell',todo.title);
-    appendText(row,'td','date-cell',todo.due_at?shortDate(todo.due_at):todo.due_date?`${todo.due_date}（仅日期）`:todo.time_text||'时间待核对');
-    const control=el('td');
-    if(todo.review)control.append(reviewActions(todo.review));
-    else{const button=el('button','text-action',completed?'撤销完成':'标记完成');button.type='button';button.onclick=()=>action(`/api/todos/${encodeURIComponent(todo.id)}/status`,{status:completed?'open':'done',expected_version:todo.version},completed?'待办已重新打开':'待办已完成');control.append(button);}
+    const company=el('td','company-cell');
+    appendText(company,'strong','company-name',app?.company||todo.company||'公司待确定');
+    appendText(company,'span','role-name',app?.position||todo.position||'岗位待确定');row.append(company);
+    const task=el('td','todo-title-cell');appendText(task,'span','next-title',todo.title);row.append(task);
+    const due=el('td','date-cell');due.append(deadlineContent(todo,!completed));row.append(due);
+    const status=el('td','status-cell');status.append(todo.review?statusChip(todo.review,true):el('span',`status-chip ${completed?'done':'active'}`,completed?'已完成':'待执行'));row.append(status);
+    const control=el('td','action-cell'),actions=el('div','table-actions');
+    const button=el('button','outline-button',todo.review?'查看依据':completed?'撤销完成':'标记完成');button.type='button';
+    button.onclick=()=>todo.review?reviewEvidence(todo.review):action(`/api/todos/${encodeURIComponent(todo.id)}/status`,{status:completed?'open':'done',expected_version:todo.version},completed?'待办已重新打开':'待办已完成');actions.append(button);control.append(actions);
+    for(const text of row.querySelectorAll('.company-name,.role-name,.next-title'))text.title=text.textContent;
     row.append(control);body.append(row);
   }
   table.append(body);scroll.append(table);container.append(scroll);
 }
-function renderTodos(){const list=$('todo-list'),completedList=$('completed-list');list.replaceChildren();completedList.replaceChildren();const pending=state.reviews.flatMap(review=>{const todo=reviewTodo(review);return todo?[{...todo,review,company:review.company,position:review.position,status:'open'}]:[];});const open=[...state.todos.filter(todo=>todo.status==='open'),...pending].sort(sortTodos),done=state.todos.filter(todo=>todo.status==='done');$('todo-count').textContent=open.length;$('urgent-count').textContent=open.filter(todo=>['overdue','soon'].includes(todoTier(todo).className)).length;renderTodoTable(list,open);renderTodoTable(completedList,done,true);$('completed-panel').hidden=!done.length;$('completed-heading').textContent=`已完成 ${done.length} 项`;}
+function renderTodos(){const list=$('todo-list'),completedList=$('completed-list');list.replaceChildren();completedList.replaceChildren();const pending=state.reviews.flatMap(review=>{const todo=reviewTodo(review);return todo?[{...todo,review,company:review.company,position:review.position,status:'open'}]:[];});const open=[...state.todos.filter(todo=>todo.status==='open'),...pending].sort(sortTodos),done=state.todos.filter(todo=>todo.status==='done');$('todo-count').textContent=open.length;$('nav-todo-count').textContent=open.length;$('urgent-count').textContent=open.filter(todo=>['overdue','critical','soon'].includes(todoTier(todo).className)).length;renderTodoTable(list,open);renderTodoTable(completedList,done,true);$('completed-panel').hidden=!done.length;$('completed-heading').textContent=`已完成 ${done.length} 项`;}
 function renderFailures(){const panel=$('failure-panel'),list=$('failure-list');panel.hidden=!state.failures.length;list.replaceChildren();$('failure-panel-count').textContent=state.failures.length;for(const failure of state.failures){const row=el('div','mini-row');appendText(row,'strong','',failure.subject||`邮件 UID ${failure.uid}`);appendText(row,'p','',failure.error);appendText(row,'span','failure-state',failure.status==='skipped'?'已跳过，留待重试':failure.status==='retry_requested'?'等待下次任务重试':'等待处理');const controls=el('div','mini-actions');if(failure.status!=='retry_requested'){const retry=el('button','text-action','下轮重试');retry.onclick=()=>action(`/api/failures/${encodeURIComponent(failure.source_key)}/retry`,{},'已安排下轮重试');controls.append(retry);}if(failure.status!=='skipped'){const skip=el('button','quiet-action','跳过并继续');skip.onclick=()=>openSkip(failure);controls.append(skip);}row.append(controls);list.append(row);}}
 function stageBadge(phase){const badge=el('span','stage-badge',stageLabel(phase));return badge;}
 const PROGRESS=['applied','screening','assessment','written_test','ai_interview','interview_1','interview_2','interview_3','offer'];
@@ -86,10 +88,11 @@ function stageProgress(entry,isReview=false){
   PROGRESS.forEach((_,index)=>track.append(el('i',index<position?'past':index===position?'current':'')));
   wrap.append(track);return wrap;
 }
-function deadlineContent(todo){
+function deadlineContent(todo,showUrgency=true){
   const wrap=el('div','deadline-content');
   appendText(wrap,'strong','',todo?.due_at?shortDate(todo.due_at):todo?.due_date?`${todo.due_date}（仅日期）`:todo?.time_text||'—');
-  if(todo?.due_at||todo?.due_date){const tier=todoTier({...todo,status:'open'});appendText(wrap,'span',`deadline-tier ${tier.className}`,tier.name);}
+  if(showUrgency&&(todo?.due_at||todo?.due_date)){const tier=todoTier(todo);appendText(wrap,'span',`deadline-tier ${tier.className}`,tier.name);}
+  wrap.title=todo?.due_at?new Date(todo.due_at).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}):todo?.due_date||todo?.time_text||'';
   return wrap;
 }
 function statusChip(entry,isReview){
@@ -102,7 +105,7 @@ function statusChip(entry,isReview){
   }
   const waiting=isReview&&entry.state==='waiting';
   const text=isReview?(waiting?'等待更多证据':'待 AI 核对'):statusLabel(entry.stage,entry.status);
-  const chip=el('span',`status-chip ${isReview?'review':entry.status==='completed'||entry.status==='passed'||entry.stage==='rejected'?'done':'active'}`,text);
+  const chip=el('span',`status-chip ${waiting?'waiting':isReview?'review':entry.status==='completed'||entry.status==='passed'||entry.stage==='rejected'?'done':'active'}`,text);
   return chip;
 }
 function reviewEvidence(review){
@@ -134,14 +137,16 @@ function applicationRow(item,extraClass='',detailIndex=-1){
   const dueCell=el('td','date-cell');dueCell.append(deadlineContent(next));row.append(dueCell);
   const statusCell=el('td','status-cell');statusCell.append(statusChip(entry,!!item.review));row.append(statusCell);
   const actionCell=el('td','action-cell');actionCell.append(rowActions(entry,!!item.review));
-  row.append(actionCell);return row;
+  row.append(actionCell);
+  for(const text of row.querySelectorAll('.next-title,.review-reason'))text.title=text.textContent;
+  return row;
 }
 function reviewClusterRows(item,firstInStage){
   const reviews=item.cluster,entry=item.record,phase=entry.stage;
   const row=el('tr',`stage-row stage-row-${phase} cluster-row${firstInStage?' stage-start':''}`);
   const company=el('td','company-cell');const name=appendText(company,'strong','company-name',entry.company||'公司待确定');name.title=entry.company||'';
   const mailCount=reviews.reduce((sum,review)=>sum+(Number(review.mail_count)||1),0);
-  appendText(company,'span','role-name',`${reviews.length} 项待 AI 核对 · ${mailCount} 封邮件`);row.append(company);
+  appendText(company,'span','role-name',`${reviews.length} 项核对记录 · ${mailCount} 封邮件`);row.append(company);
   const roles=[...new Set(reviews.map(review=>review.position).filter(Boolean))];
   if(roles.length===1)appendText(company,'small','review-reason',roles[0]);
   const stageCell=el('td','progress-cell');stageCell.append(stageProgress(entry,true));row.append(stageCell);
@@ -162,6 +167,10 @@ function renderApplications(){
   const apps=state.applications.filter(app=>(!query||`${app.company} ${app.position}`.toLocaleLowerCase().includes(query))&&stage!=='needs_review'&&(!stage||app.stage===stage));
   const reviews=state.reviews.filter(review=>(!query||`${review.company||''} ${review.position||''}`.toLocaleLowerCase().includes(query))&&(!stage||stage==='needs_review'||review.stage===stage));
   const rows=groupProgressRows(apps,reviews);
+  $('application-title').textContent=stage==='needs_review'?'AI 核对记录':'岗位进展';
+  $('application-count').textContent=rows.length;
+  $('result-summary').textContent=`显示 ${rows.length} 项 · 按阶段进度排列`;
+  $('editing-hint').textContent=stage==='needs_review'?'AI 自动核对 · 证据不足时等待新信息':'阶段和状态可下拉修改 · 自动保存';
   if(!rows.length){
     list.append(emptyBox(state.applications.length||state.reviews.length?'没有匹配的记录':'暂无岗位记录',state.applications.length||state.reviews.length?'试试其他关键词或阶段。':'运行读信整理任务后，岗位会显示在这里。'));
     return;
@@ -187,7 +196,10 @@ function render(){
   const companies=new Set(state.applications.map(app=>app.company));
   $('company-count').textContent=companies.size;$('position-count').textContent=state.applications.length;
   const reviewCount=state.reviews.filter(review=>review.state==='open').length+(state.manual_review_open||0);
-  $('review-count').textContent=reviewCount;$('nav-review-count').textContent=reviewCount;
+  const waitingCount=state.reviews.filter(review=>review.state==='waiting').length+(state.manual_review_waiting||0);
+  $('review-count').textContent=reviewCount;$('nav-review-count').textContent=reviewCount+waitingCount;
+  $('nav-review-count').title=`${reviewCount} 条待核对，${waitingCount} 条等待更多证据`;
+  $('review-summary').textContent=waitingCount?`${waitingCount} 条等待更多证据，新邮件到达后继续核对。`:'根据邮件和已有记录自动核对。';
   $('ai-queue-banner').hidden=!state.manual_review_count;
   $('ai-queue-banner').textContent=state.manual_review_count?`已有进度表：${state.manual_review_open||0} 条待 AI 核对，${state.manual_review_waiting||0} 条等待更多证据。` :'';
   const last=state.last_success_at,stale=!last||Date.now()-Date.parse(last)>4*3600_000;
@@ -210,17 +222,69 @@ async function queueImport(){
 function bind(){ $('header-date').textContent=new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'long',day:'numeric',weekday:'long'}).format(new Date());$('search').addEventListener('input',renderApplications);$('stage-filter').addEventListener('change',renderApplications);for(const button of document.querySelectorAll('[data-close]'))button.addEventListener('click',()=>$(button.dataset.close).close());$('edit-form').addEventListener('submit',async event=>{event.preventDefault();if(await action(`/api/applications/${encodeURIComponent($('edit-id').value)}/edit`,{company:$('edit-company').value,position:$('edit-position').value,stage:$('edit-stage').value,status:$('edit-status').value,expected_version:Number($('edit-version').value)},'岗位信息已更新'))$('edit-dialog').close();});$('skip-form').addEventListener('submit',async event=>{event.preventDefault();if(await action(`/api/failures/${encodeURIComponent($('skip-key').value)}/skip`,{reason:$('skip-reason').value},'已记录跳过决定'))$('skip-dialog').close();});}
 bind();
 $('open-import').addEventListener('click',()=>$('import-dialog').showModal());
-function showReviewQueue(){
-  $('stage-filter').value='needs_review';renderApplications();
-  document.querySelectorAll('.side-nav a').forEach(link=>link.classList.toggle('active',link.id==='nav-review-link'));
-  $('applications-heading').scrollIntoView({behavior:'smooth'});
+const NAVIGATION={
+  applications:{hash:'#applications-heading',heading:'applications-heading',label:'岗位进展'},
+  review:{hash:'#ai-review',heading:'applications-heading',label:'AI 核对'},
+  todos:{hash:'#todo-heading',heading:'todo-heading',label:'待办事项'},
+};
+let applicationView='applications',activeNavigation='applications',navigationScrollUntil=0,scrollFrame=0;
+history.scrollRestoration='manual';
+function navigationFromHash(hash){return Object.keys(NAVIGATION).find(key=>NAVIGATION[key].hash===hash)||'applications';}
+function setActiveNavigation(key){
+  activeNavigation=key;
+  for(const link of document.querySelectorAll('[data-nav]')){
+    const active=link.dataset.nav===key;link.classList.toggle('active',active);
+    if(active)link.setAttribute('aria-current','location');else link.removeAttribute('aria-current');
+  }
+  $('breadcrumb-current').textContent=NAVIGATION[key].label;
 }
-$('focus-review').addEventListener('click',showReviewQueue);
-$('nav-review-link').addEventListener('click',event=>{event.preventDefault();showReviewQueue();});
-$('stage-filter').addEventListener('change',()=>{document.querySelectorAll('.side-nav a').forEach(link=>link.classList.toggle('active',link.id!=='nav-review-link'));});
+function saveNavigation(key,mode='replace'){
+  const saved={...history.state,jobnote:{view:key,applicationFilter:$('stage-filter').value}};
+  const method=mode==='push'&&location.hash!==NAVIGATION[key].hash?'pushState':'replaceState';
+  history[method](saved,'',NAVIGATION[key].hash);
+}
+function navigateSection(key,{historyMode='push',scroll=true,restore}={}){
+  const filter=$('stage-filter'),previous=filter.value;
+  if(restore)filter.value=restore.applicationFilter||'';
+  if(key==='review')filter.value='needs_review';
+  if(key==='applications'&&filter.value==='needs_review')filter.value='';
+  applicationView=filter.value==='needs_review'?'review':'applications';
+  if(previous!==filter.value)renderApplications();
+  setActiveNavigation(key);
+  if(historyMode!=='none')saveNavigation(key,historyMode);
+  if(scroll){
+    // Keep the requested item active while its anchor is being positioned.
+    navigationScrollUntil=performance.now()+250;
+    const heading=$(NAVIGATION[key].heading);
+    heading.closest('section').scrollIntoView({behavior:'instant',block:'start'});
+    heading.focus({preventScroll:true});
+  }
+}
+for(const link of document.querySelectorAll('[data-nav]'))link.addEventListener('click',event=>{
+  if(event.button!==0||event.ctrlKey||event.metaKey||event.shiftKey||event.altKey)return;
+  event.preventDefault();navigateSection(link.dataset.nav);
+});
+$('focus-review').addEventListener('click',()=>navigateSection('review'));
+$('stage-filter').addEventListener('change',()=>navigateSection($('stage-filter').value==='needs_review'?'review':'applications',{historyMode:'replace',scroll:false}));
+function restoreNavigation(){navigateSection(navigationFromHash(location.hash),{historyMode:'none',restore:history.state?.jobnote});}
+window.addEventListener('popstate',restoreNavigation);
+window.addEventListener('hashchange',restoreNavigation);
+window.addEventListener('scroll',()=>{
+  if(scrollFrame)return;
+  scrollFrame=requestAnimationFrame(()=>{
+    scrollFrame=0;if(performance.now()<navigationScrollUntil)return;
+    const todoTop=document.querySelector('.today-column').getBoundingClientRect().top;
+    const nearBottom=window.scrollY+window.innerHeight>=document.documentElement.scrollHeight-4;
+    const key=todoTop<=window.innerHeight*.3||(nearBottom&&todoTop<window.innerHeight*.75)?'todos':applicationView;
+    if(key!==activeNavigation)setActiveNavigation(key);
+  });
+},{passive:true});
+window.addEventListener('wheel',()=>{navigationScrollUntil=0;},{passive:true});
+window.addEventListener('touchstart',()=>{navigationScrollUntil=0;},{passive:true});
 $('import-file').addEventListener('change',async event=>{const file=event.target.files?.[0];if(!file)return;if(file.size>200_000){showToast('文件不能超过 200 KB');return;}$('import-text').value=await file.text();$('import-summary').textContent=`已读取 ${file.name}，可以交给 AI 核对。`;});
 $('queue-import').addEventListener('click',queueImport);
 for(const prefix of ['edit'])$(prefix+'-stage').addEventListener('change',event=>{
   const status=$(prefix+'-status');fillStatusOptions(prefix+'-status',event.target.value,status.value);
 });
-refresh();setInterval(()=>refresh(true),30_000);
+refresh().then(()=>navigateSection(navigationFromHash(location.hash),{historyMode:'replace',scroll:!!location.hash,restore:history.state?.jobnote}));
+setInterval(()=>refresh(true),30_000);
