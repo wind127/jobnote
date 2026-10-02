@@ -10,14 +10,14 @@
   <script src="/app.js" defer></script>
 </head>
 <body>
-  <a class="skip-link" href="#applications-heading">跳到岗位进展</a>
+  <a class="skip-link" href="#main-content">跳到主要内容</a>
   <div class="app-shell">
     <aside class="sidebar" aria-label="主导航">
       <div class="brand"><span class="brand-mark" aria-hidden="true"><span>✓</span></span><div><strong>求职记</strong><small>JOBNOTE</small></div></div>
-      <nav class="side-nav" aria-label="页面分区">
-        <a class="active" href="#applications-heading" data-nav="applications" aria-current="location"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>岗位进展</a>
-        <a href="#ai-review" id="nav-review-link" data-nav="review"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 4v5c0 5-8 9-8 9S4 17 4 12V7l8-4Z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg>AI 核对 <b id="nav-review-count">0</b></a>
-        <a href="#todo-heading" data-nav="todos"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="16" rx="2"/><path d="M8 3v4m8-4v4M4 11h16m-11 5 2 2 4-4"/></svg>待办事项 <b id="nav-todo-count">0</b></a>
+      <nav class="side-nav" aria-label="模块导航">
+        <a class="active" href="#applications" data-nav="applications" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>岗位进展</a>
+        <a href="#review" id="nav-review-link" data-nav="review"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 4v5c0 5-8 9-8 9S4 17 4 12V7l8-4Z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg>AI 核对 <b id="nav-review-count">0</b></a>
+        <a href="#todos" data-nav="todos"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="16" rx="2"/><path d="M8 3v4m8-4v4M4 11h16m-11 5 2 2 4-4"/></svg>待办事项 <b id="nav-todo-count">0</b></a>
       </nav>
       <div class="side-note"><strong><span class="signal-dot"></span>本地邮箱记录</strong><span id="sidebar-sync">正在读取状态…</span><small>仅在这台电脑保存求职数据</small></div>
     </aside>
@@ -28,31 +28,40 @@
     </header>
     <div class="demo-banner" id="demo-banner" hidden>当前展示虚构演示数据。<a href="http://127.0.0.1:3210/">查看真实求职进展</a></div>
 
-    <main>
-      <section class="page-head" aria-labelledby="page-heading"><div><h1 id="page-heading">求职进展</h1></div><div class="sync-line"><span class="sync-led" id="sync-led"></span><span id="sync-status">正在读取状态…</span></div></section>
-
-      <section class="overview" aria-label="进度摘要">
-        <div class="overview-copy"><span class="overview-label">AI 自动整理</span><h2><strong id="review-count">0</strong> 条进展待核对</h2><p id="review-summary">根据邮件和已有记录自动核对。</p><button type="button" id="focus-review">查看核对记录 <span aria-hidden="true">→</span></button></div>
-        <div class="overview-stat"><span>近期需处理</span><div><strong id="urgent-count">—</strong><small>项</small></div><p>逾期及未来 48 小时</p></div>
-        <div class="overview-stat"><span>求职记录</span><div><strong id="company-count">0</strong><small>家公司</small></div><p><b id="position-count">0</b> 个岗位</p></div>
-      </section>
-
+    <main id="main-content" tabindex="-1">
+      <section class="page-head" aria-labelledby="page-heading"><div><h1 id="page-heading" tabindex="-1">岗位进展</h1><p id="page-description">查看各公司的招聘进度，直接修改阶段与状态。</p></div><div class="sync-line"><span class="sync-led" id="sync-led"></span><span id="sync-status">正在读取状态…</span></div></section>
       <div class="workspace-grid">
+        <div class="module-view" data-page="applications">
+        <div class="module-summary" aria-label="岗位统计"><div><span>有进展的公司</span><strong id="company-count">0</strong></div><div><span>岗位记录</span><strong id="position-count">0</strong></div></div>
         <section class="applications-column section-card" aria-labelledby="applications-heading">
-          <span id="ai-review" class="section-anchor" aria-hidden="true"></span>
-          <div class="section-heading application-heading"><div><h2 id="applications-heading" tabindex="-1"><span id="application-title">岗位进展</span> <span class="heading-count" id="application-count"></span></h2><span id="update-time" class="minor-copy"></span></div><div class="heading-actions"><button type="button" class="outline-button" id="open-import"><span aria-hidden="true">＋</span> 导入已有进度</button></div></div>
-          <div id="ai-queue-banner" class="ai-queue-banner" role="status" hidden></div>
-          <div class="filters"><label class="search-field"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg><span class="sr-only">搜索公司或岗位</span><input id="search" type="search" placeholder="搜索公司或岗位" autocomplete="off"></label><label class="select-field"><span class="sr-only">按阶段筛选</span><select id="stage-filter"><option value="">全部阶段</option><option value="needs_review">AI 核对记录</option><option value="applied">投递</option><option value="screening">简历筛选</option><option value="assessment">测评</option><option value="written_test">笔试</option><option value="ai_interview">AI 面试</option><option value="interview_1">一面</option><option value="interview_2">二面</option><option value="interview_3">三面</option><option value="offer">Offer</option><option value="rejected">流程结束</option></select></label></div>
+          <div class="section-heading application-heading"><div><h2 id="applications-heading">全部岗位 <span class="heading-count" id="application-count"></span></h2><span id="update-time" class="minor-copy"></span></div><div class="heading-actions"><button type="button" class="outline-button" id="open-import"><span aria-hidden="true">＋</span> 导入已有进度</button></div></div>
+          <div class="filters"><label class="search-field"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg><span class="sr-only">搜索公司或岗位</span><input id="search" type="search" placeholder="搜索公司或岗位" autocomplete="off"></label><label class="select-field"><span class="sr-only">按阶段筛选</span><select id="stage-filter"><option value="">全部阶段</option><option value="applied">投递</option><option value="screening">简历筛选</option><option value="assessment">测评</option><option value="written_test">笔试</option><option value="ai_interview">AI 面试</option><option value="interview_1">一面</option><option value="interview_2">二面</option><option value="interview_3">三面</option><option value="offer">Offer</option><option value="rejected">流程结束</option></select></label></div>
           <div class="table-context"><span id="result-summary" aria-live="polite"></span><span id="editing-hint">阶段和状态可下拉修改 · 自动保存</span></div>
           <div id="application-list" class="application-list"></div>
         </section>
+        </div>
 
-        <section class="today-column section-card" aria-labelledby="todo-heading">
-          <div class="section-heading"><div><h2 id="todo-heading" tabindex="-1">待办事项 <span class="heading-count" id="todo-count">0</span></h2><span class="minor-copy">按截止时间排列，优先处理临近安排</span></div><span class="section-note">完成后可撤销</span></div>
-          <div class="todo-list" id="todo-list"></div>
-          <details class="completed-panel" id="completed-panel" hidden><summary id="completed-heading">已完成</summary><div class="todo-list" id="completed-list"></div></details>
+        <div class="module-view" data-page="review" hidden>
+        <div class="module-summary" aria-label="核对统计"><div><span>待 AI 核对</span><strong id="review-count">0</strong></div><div><span>等待更多证据</span><strong id="waiting-count">0</strong></div><p id="review-summary">根据邮件和已有记录自动核对。</p></div>
+        <section class="review-column section-card" aria-labelledby="review-heading">
+          <div class="section-heading"><h2 id="review-heading">邮件核对记录 <span class="heading-count" id="review-list-count">0</span></h2></div>
+          <div id="ai-queue-banner" class="ai-queue-banner" role="status" hidden></div>
+          <div class="filters"><label class="search-field"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg><span class="sr-only">搜索核对记录</span><input id="review-search" type="search" placeholder="搜索待核对的公司或岗位" autocomplete="off"></label><label class="select-field"><span class="sr-only">按核对状态筛选</span><select id="review-filter"><option value="">全部核对状态</option><option value="open">待 AI 核对</option><option value="waiting">等待更多证据</option></select></label></div>
+          <div class="table-context"><span id="review-result-summary" aria-live="polite"></span><span>由 AI 自动处理，保留原始依据</span></div>
+          <div id="review-list" class="application-list"></div>
           <div class="failure-panel" id="failure-panel" hidden><div class="panel-heading"><span>邮件处理问题</span><span id="failure-panel-count"></span></div><div id="failure-list"></div></div>
         </section>
+        </div>
+
+        <div class="module-view" data-page="todos" hidden>
+        <div class="module-summary" aria-label="待办统计"><div><span>待处理事项</span><strong id="pending-count">0</strong></div><div><span>未来 48 小时截止</span><strong id="urgent-count">0</strong></div><p>仅展示已确定的安排。证据不足的通知由 AI 继续核对。</p></div>
+        <section class="today-column section-card" aria-labelledby="todo-heading">
+          <div class="section-heading"><h2 id="todo-heading">任务清单</h2><span class="section-note">完成后可撤销</span></div>
+          <div class="todo-toolbar"><div class="todo-tabs" role="group" aria-label="待办分类"><button type="button" data-todo-view="pending" aria-pressed="true">待处理 <span id="todo-pending-count">0</span></button><button type="button" data-todo-view="overdue" aria-pressed="false">已逾期 <span id="todo-overdue-count">0</span></button><button type="button" data-todo-view="done" aria-pressed="false">已完成 <span id="todo-done-count">0</span></button></div><label class="search-field"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg><span class="sr-only">搜索待办</span><input id="todo-search" type="search" placeholder="搜索事项、公司或岗位" autocomplete="off"></label></div>
+          <div class="table-context"><span id="todo-result-summary" aria-live="polite"></span><span id="todo-view-description">按截止时间排列</span></div>
+          <div class="todo-list" id="todo-list"></div>
+        </section>
+        </div>
       </div>
     </main>
     </div>
